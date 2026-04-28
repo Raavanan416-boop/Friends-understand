@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="description" content="Mind Sync Guess Game - A real-time multiplayer guessing game. Challenge your friends!">
+  <meta name="theme-color" content="#6c5ce7">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Mind Sync Game</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/svg+xml" href="icons/icon-192.svg">
+  <link rel="apple-touch-icon" href="icons/icon-192.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Floating Emoji Container -->
+  <div id="emoji-float-container"></div>
+
+  <!-- ═══════ LOGIN SCREEN ═══════ -->
+  <section id="screen-login" class="screen active">
+    <div class="login-bg">
+      <div class="login-orb orb1"></div>
+      <div class="login-orb orb2"></div>
+      <div class="login-orb orb3"></div>
+    </div>
+    <div class="login-wrapper">
+      <div class="login-card glass-card">
+        <div class="login-logo">🧠</div>
+        <h1 class="login-title">Mind Sync</h1>
+        <p class="login-sub">Think Your friend answer.Guess right.</p>
+        <div class="form-group">
+          <input type="text" id="input-login-name" class="input-field" placeholder="Enter your name" maxlength="15" autocomplete="off">
+        </div>
+        <button class="btn-primary btn-neon" id="btn-login">
+          <span>Start Game</span>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════ HOME SCREEN ═══════ -->
+  <section id="screen-home" class="screen">
+    <!-- Top Bar -->
+    <header class="top-bar glass-bar">
+      <div class="top-bar-left">
+        <span class="app-logo">🧠</span>
+        <h1 class="app-title">Mind Sync</h1>
+      </div>
+      <div class="top-bar-right">
+        <button class="icon-btn" id="btn-history" title="History">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="9"/><path d="M1 4v4h4"/><path d="M3.51 15a9 9 0 1 0 .49-7.5L1 8"/></svg>
+        </button>
+        <button class="icon-btn" id="btn-name-change" title="Change Name">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+        </button>
+        <button class="icon-btn" id="btn-avatar-change" title="Change Avatar">
+          <span id="topbar-avatar" style="font-size:20px">😀</span>
+        </button>
+        <button class="icon-btn" id="btn-install-topbar" title="Install App" style="display:none">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Welcome -->
+    <div class="home-welcome">
+      <span class="welcome-avatar" id="home-avatar">😀</span>
+      <p class="welcome-text">Hey, <strong id="home-player-name">Player</strong>!</p>
+    </div>
+
+    <!-- Tab Switcher -->
+    <div class="tab-container glass-card">
+      <div class="tab-header">
+        <button class="tab-btn active" data-tab="create">Create Room</button>
+        <button class="tab-btn" data-tab="join">Join Room</button>
+        <div class="tab-indicator"></div>
+      </div>
+      <div class="tab-body">
+        <!-- CREATE TAB -->
+        <div class="tab-pane active" id="tab-create">
+          <div class="form-group">
+            <label>Room Name</label>
+            <input type="text" id="input-room-name" class="input-field" placeholder="My Awesome Room" maxlength="25" autocomplete="off">
+          </div>
+          <div class="form-group">
+            <label>Password <span class="optional">(optional)</span></label>
+            <input type="password" id="input-room-password" class="input-field" placeholder="Leave empty for open room" maxlength="20" autocomplete="off">
+          </div>
+          <div class="form-group">
+            <label>Players</label>
+            <div class="toggle-group" id="player-count-toggle">
+              <button class="toggle-btn active" data-value="2">2 Players</button>
+              <button class="toggle-btn" data-value="4">4 Players</button>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Rounds</label>
+            <div class="toggle-group" id="round-count-toggle">
+              <button class="toggle-btn" data-value="3">3</button>
+              <button class="toggle-btn active" data-value="4">4</button>
+              <button class="toggle-btn" data-value="6">6</button>
+              <button class="toggle-btn" data-value="8">8</button>
+              <button class="toggle-btn" data-value="10">10</button>
+            </div>
+          </div>
+          <button class="btn-primary btn-neon" id="btn-create-room">
+            <span>Create Room</span>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+        </div>
+        <!-- JOIN TAB -->
+        <div class="tab-pane" id="tab-join">
+          <div class="rooms-list" id="rooms-list">
+            <div class="rooms-loading"><div class="spinner"></div><p>Loading rooms…</p></div>
+          </div>
+          <button class="btn-secondary btn-refresh" id="btn-refresh-rooms">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 4v6h6"/><path d="M23 20v-6h-6"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg>
+            Refresh
+          </button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════ AVATAR PANEL ═══════ -->
+  <div class="slide-panel" id="panel-avatar">
+    <div class="panel-overlay"></div>
+    <div class="panel-content glass-card">
+      <div class="panel-handle"></div>
+      <h2 class="panel-title">Choose Avatar</h2>
+      <div class="avatar-grid" id="avatar-grid"></div>
+    </div>
+  </div>
+
+  <!-- ═══════ HISTORY PANEL ═══════ -->
+  <div class="slide-panel" id="panel-history">
+    <div class="panel-overlay"></div>
+    <div class="panel-content glass-card">
+      <div class="panel-handle"></div>
+      <h2 class="panel-title">Game History</h2>
+      <div class="history-list" id="history-list">
+        <p class="empty-state">No games played yet</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════ NAME CHANGE PANEL ═══════ -->
+  <div class="slide-panel" id="panel-name">
+    <div class="panel-overlay"></div>
+    <div class="panel-content glass-card">
+      <div class="panel-handle"></div>
+      <h2 class="panel-title">Change Name</h2>
+      <div class="form-group">
+        <input type="text" id="input-new-name" class="input-field" placeholder="Enter new name" maxlength="15" autocomplete="off">
+      </div>
+      <button class="btn-primary btn-neon" id="btn-save-name">Save Name</button>
+    </div>
+  </div>
+
+  <!-- ═══════ WAITING ROOM ═══════ -->
+  <section id="screen-waiting" class="screen">
+    <header class="top-bar glass-bar">
+      <div class="top-bar-left">
+        <span class="app-logo">🧠</span>
+        <h1 class="app-title">Lobby</h1>
+      </div>
+      <div class="top-bar-right">
+        <button class="icon-btn btn-danger-icon" id="btn-leave-waiting" title="Leave">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        </button>
+      </div>
+    </header>
+    <div class="waiting-body">
+      <div class="waiting-room-name glass-card" style="text-align:center;padding:18px 24px">
+        <p style="font-size:12px;color:var(--text2);text-transform:uppercase;letter-spacing:2px;font-weight:700">Room</p>
+        <h2 id="waiting-room-name" style="font-size:22px;font-weight:800;margin-top:4px">---</h2>
+      </div>
+      <div class="waiting-players" id="waiting-players"></div>
+      <div class="waiting-info"><div class="pulse-dot"></div><span>Waiting for players…</span></div>
+      <button class="btn-primary btn-neon btn-start-game" id="btn-start-game" style="display:none">🚀 Start Game</button>
+    </div>
+    <!-- Hidden element for internal use -->
+    <span id="waiting-room-code" style="display:none"></span>
+  </section>
+
+  <!-- ═══════ GAME SCREEN ═══════ -->
+  <section id="screen-game" class="screen">
+    <header class="game-top-bar glass-bar">
+      <div class="game-top-left">
+        <span class="game-round-badge" id="game-round-badge">Round 1/3</span>
+      </div>
+      <div class="game-top-right">
+        <button class="game-top-btn" id="btn-players-list" title="Players">👥</button>
+        <button class="game-top-btn" id="btn-leaderboard" title="Leaderboard">🏆</button>
+        <button class="game-top-btn btn-danger-icon" id="btn-leave-game" title="Leave">🚪</button>
+      </div>
+    </header>
+    <div class="game-timer-bar"><div class="timer-fill" id="timer-fill"></div></div>
+    <div class="timer-text" id="timer-text">35s</div>
+    <div class="game-content" id="game-content"></div>
+    <div class="emoji-bar">
+      <button class="emoji-btn" data-emoji="😂">😂</button>
+      <button class="emoji-btn" data-emoji="😲">😲</button>
+      <button class="emoji-btn" data-emoji="😭">😭</button>
+      <button class="emoji-btn" data-emoji="😎">😎</button>
+      <button class="emoji-btn" data-emoji="🥳">🥳</button>
+    </div>
+  </section>
+
+  <!-- ═══════ POPUPS ═══════ -->
+  <!-- Password Prompt -->
+  <div class="popup-overlay" id="popup-password">
+    <div class="popup-card glass-card">
+      <h3>🔒 Room Password</h3>
+      <p>This room requires a password</p>
+      <input type="password" id="input-join-password" class="input-field" placeholder="Enter password" autocomplete="off">
+      <div class="popup-actions">
+        <button class="btn-secondary" id="btn-cancel-password">Cancel</button>
+        <button class="btn-primary btn-neon" id="btn-submit-password">Join</button>
+      </div>
+    </div>
+  </div>
+  <!-- Leave Confirmation -->
+  <div class="popup-overlay" id="popup-leave">
+    <div class="popup-card glass-card">
+      <h3>Leave Game?</h3>
+      <p>You'll lose your progress.</p>
+      <div class="popup-actions">
+        <button class="btn-secondary" id="btn-keep-playing">Keep Playing</button>
+        <button class="btn-primary btn-danger" id="btn-confirm-leave">Leave</button>
+      </div>
+    </div>
+  </div>
+  <!-- Players List -->
+  <div class="popup-overlay" id="popup-players">
+    <div class="popup-card glass-card">
+      <h3>👥 Players</h3>
+      <div class="players-popup-list" id="players-popup-list"></div>
+      <button class="btn-secondary popup-close-btn" id="btn-close-players">Close</button>
+    </div>
+  </div>
+  <!-- Leaderboard -->
+  <div class="popup-overlay" id="popup-leaderboard">
+    <div class="popup-card glass-card">
+      <h3>🏆 Leaderboard</h3>
+      <div class="leaderboard-list" id="leaderboard-list"></div>
+      <button class="btn-secondary popup-close-btn" id="btn-close-leaderboard">Close</button>
+    </div>
+  </div>
+  <!-- Game Over -->
+  <div class="popup-overlay" id="popup-gameover">
+    <div class="popup-card glass-card popup-gameover-card">
+      <div class="gameover-crown">👑</div>
+      <h3 id="gameover-title">Game Over!</h3>
+      <div class="gameover-winner" id="gameover-winner"></div>
+      <div class="leaderboard-list" id="gameover-scores"></div>
+      <div class="popup-actions">
+        <button class="btn-primary btn-neon" id="btn-play-again">Play Again</button>
+        <button class="btn-secondary" id="btn-back-home">Back Home</button>
+      </div>
+    </div>
+  </div>
+  <!-- Play Again Request -->
+  <div class="popup-overlay" id="popup-play-again">
+    <div class="popup-card glass-card">
+      <h3>🔄 Play Again?</h3>
+      <p id="play-again-text">Someone wants to play again!</p>
+      <div class="popup-actions">
+        <button class="btn-primary btn-neon" id="btn-accept-play-again">Accept</button>
+        <button class="btn-secondary" id="btn-reject-play-again">Reject</button>
+      </div>
+      <div class="play-again-timer-bar"><div class="play-again-timer-fill" id="play-again-timer-fill"></div></div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast" id="toast"></div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>

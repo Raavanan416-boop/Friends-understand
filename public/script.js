@@ -1,0 +1,645 @@
+/* ═══ MIND SYNC GAME — Client ═══ */
+const socket = io();
+const AVATARS = ['😀','😎','🤩','🥳','😈','👻','🤖','👽','🦊','🐱','🐶','🦁','🐸','🐧','🦄','🌟','🔥','💎','🎯','🎮'];
+const SOUNDS = {};
+let state = {
+  playerName: localStorage.getItem('ms-name') || '',
+  avatar: localStorage.getItem('ms-avatar') || '😀',
+  roomCode: null, myId: null, timerInterval: null, pendingJoin: null,
+  history: JSON.parse(localStorage.getItem('ms-history') || '[]'),
+  lastRoomState: null,
+  hasLeftRoom: false
+};
+
+// ─── Sound ───
+function initSounds() {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return; const ctx = new AC();
+  function tone(f,d,t='sine',v=.12){const o=ctx.createOscillator(),g=ctx.createGain();o.type=t;o.frequency.value=f;g.gain.setValueAtTime(v,ctx.currentTime);g.gain.exponentialRampToValueAtTime(.001,ctx.currentTime+d);o.connect(g);g.connect(ctx.destination);o.start();o.stop(ctx.currentTime+d)}
+  SOUNDS.click=()=>tone(800,.08);
+  SOUNDS.timerWarn=()=>{tone(440,.15,'square',.1);setTimeout(()=>tone(440,.15,'square',.1),200)};
+  SOUNDS.correct=()=>{tone(523,.15);setTimeout(()=>tone(659,.15),150);setTimeout(()=>tone(784,.2),300)};
+  SOUNDS.wrong=()=>{tone(330,.2,'sawtooth',.1);setTimeout(()=>tone(260,.3,'sawtooth',.1),200)};
+  SOUNDS.winner=()=>{[523,659,784,1047].forEach((f,i)=>setTimeout(()=>tone(f,.3),i*150))};
+}
+function sfx(n){if(SOUNDS[n])try{SOUNDS[n]()}catch(e){}}
+
+// ─── Helpers ───
+const $=s=>document.querySelector(s), $$=s=>document.querySelectorAll(s);
+function showScreen(id){$$('.screen').forEach(s=>s.classList.remove('active'));$(`#screen-${id}`).classList.add('active')}
+function openPanel(id){$(`#panel-${id}`).classList.add('open');sfx('click')}
+function closeAllPanels(){$$('.slide-panel').forEach(p=>p.classList.remove('open'))}
+function openPopup(id){$(`#popup-${id}`).classList.add('open')}
+function closePopup(id){$(`#popup-${id}`).classList.remove('open')}
+function closeAllPopups(){$$('.popup-overlay').forEach(p=>p.classList.remove('open'))}
+function showToast(m,d=2500){const t=$('#toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),d)}
+function escHtml(s){return s?s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'):''}
+
+// Ripple effect
+document.addEventListener('click', e => {
+  const btn = e.target.closest('.btn-primary,.btn-secondary,.toggle-btn,.icon-btn,.game-top-btn,.emoji-btn');
+  if (!btn) return;
+  const r = document.createElement('span'); r.className = 'ripple';
+  const rect = btn.getBoundingClientRect();
+  r.style.left = (e.clientX - rect.left) + 'px';
+  r.style.top = (e.clientY - rect.top) + 'px';
+  btn.style.position = 'relative'; btn.style.overflow = 'hidden';
+  btn.appendChild(r); setTimeout(() => r.remove(), 600);
+});
+
+// ─── Init ───
+function initUI() {
+  if (state.playerName) { showScreen('home'); updateHomeUI(); fetchRooms(); } else { showScreen('login'); }
+  $('#btn-login').onclick = doLogin;
+  $('#input-login-name').onkeydown = e => { if (e.key === 'Enter') doLogin(); };
+
+  // Tabs
+  $$('.tab-btn').forEach(b => b.onclick = () => switchTab(b.dataset.tab));
+  setupToggles();
+
+  // Home
+  $('#btn-history').onclick = () => { renderHistory(); openPanel('history'); };
+  $('#btn-name-change').onclick = () => { $('#input-new-name').value = state.playerName; openPanel('name'); };
+  $('#btn-avatar-change').onclick = () => openPanel('avatar');
+  $('#btn-create-room').onclick = createRoom;
+  $('#btn-refresh-rooms').onclick = fetchRooms;
+  $('#btn-install-topbar').onclick = installApp;
+  $('#btn-save-name').onclick = saveName;
+
+  // Panels
+  $$('.panel-overlay').forEach(o => o.onclick = closeAllPanels);
+  buildAvatarGrid();
+
+  // Waiting
+  $('#btn-leave-waiting').onclick = leaveRoom;
+  $('#btn-start-game').onclick = startGame;
+
+  // Game
+  $('#btn-players-list').onclick = () => openPopup('players');
+  $('#btn-leaderboard').onclick = () => openPopup('leaderboard');
+  $('#btn-leave-game').onclick = () => openPopup('leave');
+  $('#btn-keep-playing').onclick = () => closePopup('leave');
+  $('#btn-confirm-leave').onclick = () => { closePopup('leave'); leaveRoom(); };
+  $('#btn-close-players').onclick = () => closePopup('players');
+  $('#btn-close-leaderboard').onclick = () => closePopup('leaderboard');
+
+  // Game over
+  $('#btn-play-again').onclick = requestPlayAgain;
+  $('#btn-back-home').onclick = goHome;
+  $('#btn-accept-play-again').onclick = acceptPlayAgain;
+  $('#btn-reject-play-again').onclick = rejectPlayAgain;
+
+  // Password popup
+  $('#btn-cancel-password').onclick = () => { state.pendingJoin = null; closePopup('password'); };
+  $('#btn-submit-password').onclick = submitPassword;
+
+  // Emojis
+  $$('.emoji-btn').forEach(b => b.onclick = () => {
+    if (state.roomCode) socket.emit('emoji-reaction', { roomCode: state.roomCode, emoji: b.dataset.emoji });
+  });
+}
+
+function doLogin() {
+  const name = $('#input-login-name').value.trim();
+  if (!name) return showToast('Please enter your name');
+  state.playerName = name;
+  localStorage.setItem('ms-name', name);
+  showScreen('home');
+  updateHomeUI();
+  fetchRooms();
+  sfx('click');
+}
+
+function saveName() {
+  const name = $('#input-new-name').value.trim();
+  if (!name) return showToast('Enter a name');
+  const oldName = state.playerName;
+  state.playerName = name;
+  localStorage.setItem('ms-name', name);
+  updateHomeUI();
+  closeAllPanels();
+  showToast('Name updated!');
+  // Notify server if in a room
+  socket.emit('change-name', { newName: name });
+}
+
+function updateHomeUI() {
+  $('#home-avatar').textContent = state.avatar;
+  $('#home-player-name').textContent = state.playerName;
+  $('#topbar-avatar').textContent = state.avatar;
+}
+
+function switchTab(tab) {
+  $$('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+  $$('.tab-pane').forEach(p => p.classList.remove('active'));
+  $(`#tab-${tab}`).classList.add('active');
+  const idx = tab === 'create' ? 0 : 1;
+  $('.tab-indicator').style.left = (idx * 50) + '%';
+  if (tab === 'join') fetchRooms();
+  sfx('click');
+}
+
+function setupToggles() {
+  $$('.toggle-group').forEach(g => g.querySelectorAll('.toggle-btn').forEach(b => {
+    b.onclick = () => { g.querySelectorAll('.toggle-btn').forEach(x => x.classList.remove('active')); b.classList.add('active'); sfx('click'); };
+  }));
+}
+
+function buildAvatarGrid() {
+  const grid = $('#avatar-grid'); grid.innerHTML = '';
+  AVATARS.forEach(a => {
+    const d = document.createElement('div');
+    d.className = 'avatar-option' + (a === state.avatar ? ' active' : '');
+    d.textContent = a;
+    d.onclick = () => {
+      state.avatar = a; localStorage.setItem('ms-avatar', a);
+      $$('.avatar-option').forEach(o => o.classList.remove('active')); d.classList.add('active');
+      updateHomeUI(); sfx('click'); setTimeout(closeAllPanels, 300);
+    };
+    grid.appendChild(d);
+  });
+}
+
+function renderHistory() {
+  const l = $('#history-list');
+  if (!state.history.length) { l.innerHTML = '<p class="empty-state">No games played yet</p>'; return; }
+  l.innerHTML = state.history.slice(0, 20).map(h => `<div class="history-item"><div class="h-date">${h.date}</div><div class="h-result">${h.result}</div><div class="h-score">Score: ${h.score} | Players: ${h.players}</div></div>`).join('');
+}
+
+// ─── Room Actions ───
+function createRoom() {
+  const roomName = $('#input-room-name').value.trim() || 'Room';
+  const password = $('#input-room-password').value.trim();
+  const maxPlayers = parseInt($('#player-count-toggle .toggle-btn.active')?.dataset.value || '2');
+  const totalRounds = parseInt($('#round-count-toggle .toggle-btn.active')?.dataset.value || '4');
+  socket.emit('create-room', { playerName: state.playerName, avatar: state.avatar, maxPlayers, totalRounds, roomName, password });
+  sfx('click');
+}
+
+async function fetchRooms() {
+  const list = $('#rooms-list');
+  list.innerHTML = '<div class="rooms-loading"><div class="spinner"></div><p>Loading rooms…</p></div>';
+  try {
+    const res = await fetch('/api/rooms');
+    const rooms = await res.json();
+    if (!rooms.length) { list.innerHTML = '<p class="rooms-empty">No rooms available. Create one!</p>'; return; }
+    list.innerHTML = rooms.map(r => `
+      <div class="room-item" data-code="${r.roomCode}" data-has-pw="${r.hasPassword}">
+        <div class="room-item-left">
+          <div class="room-item-name">${escHtml(r.roomName)}</div>
+          <div class="room-item-info">${r.players}/${r.maxPlayers} players · ${r.totalRounds} rounds</div>
+        </div>
+        <div class="room-item-right">
+          ${r.hasPassword ? '<span class="room-item-lock">🔒</span>' : ''}
+          <span class="room-item-badge">JOIN</span>
+        </div>
+      </div>
+    `).join('');
+    list.querySelectorAll('.room-item').forEach(el => el.onclick = () => handleRoomClick(el));
+  } catch (e) { list.innerHTML = '<p class="rooms-empty">Could not load rooms</p>'; }
+}
+
+function handleRoomClick(el) {
+  const code = el.dataset.code;
+  const hasPw = el.dataset.hasPw === 'true';
+  if (hasPw) {
+    state.pendingJoin = code;
+    $('#input-join-password').value = '';
+    openPopup('password');
+  } else {
+    socket.emit('join-room', { roomCode: code, playerName: state.playerName, avatar: state.avatar, password: '' });
+  }
+  sfx('click');
+}
+
+function submitPassword() {
+  if (!state.pendingJoin) return;
+  const pw = $('#input-join-password').value;
+  socket.emit('join-room', { roomCode: state.pendingJoin, playerName: state.playerName, avatar: state.avatar, password: pw });
+  closePopup('password');
+  state.pendingJoin = null;
+}
+
+function leaveRoom() {
+  state.hasLeftRoom = true;
+  if (state.roomCode) socket.emit('leave-room', { roomCode: state.roomCode });
+  cleanupAndGoHome();
+}
+
+function cleanupAndGoHome() {
+  state.roomCode = null;
+  state.lastRoomState = null;
+  state.hasLeftRoom = true;
+  clearInterval(state.timerInterval);
+  closeAllPanels();
+  closeAllPopups();
+  showScreen('home');
+  fetchRooms();
+}
+
+function goHome() {
+  state.roomCode = null;
+  state.lastRoomState = null;
+  state.hasLeftRoom = false;
+  clearInterval(state.timerInterval);
+  closeAllPanels();
+  closeAllPopups();
+  showScreen('home');
+  fetchRooms();
+}
+
+function startGame() { socket.emit('start-game', { roomCode: state.roomCode }); sfx('click'); }
+
+// ─── Timer ───
+function startTimer(endTime, totalMs) {
+  clearInterval(state.timerInterval);
+  const fill = $('#timer-fill'), text = $('#timer-text');
+  function tick() {
+    const rem = Math.max(0, endTime - Date.now());
+    const pct = (rem / totalMs) * 100, secs = Math.ceil(rem / 1000);
+    fill.style.width = pct + '%'; text.textContent = secs + 's';
+    if (secs <= 5) { fill.classList.add('warning'); text.classList.add('warning'); if (secs === 5) sfx('timerWarn'); }
+    else { fill.classList.remove('warning'); text.classList.remove('warning'); }
+    if (rem <= 0) clearInterval(state.timerInterval);
+  }
+  tick(); state.timerInterval = setInterval(tick, 200);
+}
+
+// ─── Game Render ───
+function renderGameContent(data) {
+  const gc = $('#game-content');
+  const isMyTurn = data.players?.[data.currentTurnPlayerIndex]?.id === state.myId;
+  const tp = data.turnPlayerName || 'Someone';
+
+  if (data.phase === 'question') {
+    if (isMyTurn) {
+      gc.innerHTML = `<p class="game-phase-label">Your Turn</p><p class="game-turn-info">Write a question and its answer</p>
+        <div class="game-input-area">
+          <input type="text" id="input-question" class="input-field" placeholder="Type your question…" maxlength="120" autocomplete="off">
+          <input type="text" id="input-answer" class="input-field" placeholder="The answer…" maxlength="60" autocomplete="off">
+          <button class="btn-primary btn-neon" id="btn-submit-qa">Submit</button>
+        </div>`;
+      $('#btn-submit-qa').onclick = () => {
+        const q = $('#input-question').value.trim(), a = $('#input-answer').value.trim();
+        if (!q || !a) return showToast('Fill both fields');
+        socket.emit('submit-qa', { roomCode: state.roomCode, question: q, answer: a }); sfx('click');
+      };
+    } else {
+      gc.innerHTML = `<div class="waiting-turn-msg"><span class="wtm-emoji">🤔</span><p><strong>${escHtml(tp)}</strong> is writing a question…</p></div>`;
+    }
+    startTimer(data.timerEnd, 35000);
+  } else if (data.phase === 'guess') {
+    if (isMyTurn) {
+      gc.innerHTML = `<div class="game-question-display"><div class="q-label">Your Question</div><div class="q-text">${escHtml(data.question)}</div></div>
+        <div class="waiting-turn-msg"><span class="wtm-emoji">⏳</span><p>Others are guessing…</p></div>`;
+    } else {
+      // Build masked answer hint
+      const ansLen = data.answerLength || 0;
+      const maskedChars = ansLen > 0 ? '•'.repeat(Math.min(ansLen, 20)) : '• • • • •';
+      gc.innerHTML = `<div class="game-question-display"><div class="q-label">${escHtml(tp)}'s Question</div><div class="q-text">${escHtml(data.question)}</div></div>
+        <div class="answer-card-wrapper">
+          <div class="answer-card" id="answer-card">
+            <div class="answer-card-inner">
+              <div class="answer-card-front">
+                <div class="answer-card-icon">🔒</div>
+                <div class="answer-card-label">Answer Hidden</div>
+                <div class="answer-card-masked">${maskedChars}</div>
+              </div>
+              <div class="answer-card-back">
+                <div class="answer-card-icon">🔓</div>
+                <div class="answer-card-label">Answer</div>
+                <div class="answer-card-value" id="answer-card-value">—</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="game-input-area">
+          <input type="text" id="input-guess" class="input-field" placeholder="Your guess…" maxlength="60" autocomplete="off">
+          <button class="btn-primary btn-neon" id="btn-submit-guess">Submit Guess</button>
+        </div>`;
+      $('#btn-submit-guess').onclick = () => {
+        const g = $('#input-guess').value.trim();
+        if (!g) return showToast('Type your guess');
+        socket.emit('submit-guess', { roomCode: state.roomCode, guess: g });
+        $('#btn-submit-guess').disabled = true; $('#btn-submit-guess').textContent = 'Submitted ✓'; sfx('click');
+      };
+    }
+    startTimer(data.timerEnd, 25000);
+  } else if (data.phase === 'waiting') {
+    gc.innerHTML = `<div class="waiting-turn-msg"><span class="wtm-emoji">🎮</span><p>Waiting for host…</p></div>`;
+  }
+}
+
+// ─── Socket Events ───
+socket.on('connect', () => { state.myId = socket.id; });
+
+socket.on('room-created', ({ roomCode }) => {
+  state.roomCode = roomCode; state.hasLeftRoom = false; closeAllPanels(); showScreen('waiting'); showToast('Room created!');
+});
+socket.on('room-joined', ({ roomCode }) => {
+  state.roomCode = roomCode; state.hasLeftRoom = false; closeAllPanels(); showScreen('waiting'); showToast('Joined!');
+});
+socket.on('join-error', m => showToast('❌ ' + m));
+socket.on('game-error', m => showToast('❌ ' + m));
+socket.on('rooms-updated', () => { if ($('#tab-join')?.classList.contains('active')) fetchRooms(); });
+
+socket.on('room-state', data => {
+  // ═══ GUARD: If player has left, ignore ALL room-state events (prevents ghost re-entry) ═══
+  if (state.hasLeftRoom) return;
+  if (!state.roomCode) return;
+  if (data.roomCode !== state.roomCode) return;
+
+  // Check if this player is even in the player list
+  const meInRoom = data.players.some(p => p.id === state.myId);
+  if (!meInRoom && data.phase !== 'waiting') return;
+
+  state.lastRoomState = data;
+  if (data.phase === 'waiting') {
+    $('#waiting-room-code').textContent = data.roomCode;
+    // Show room name instead of code
+    const nameEl = $('#waiting-room-name');
+    if (nameEl) nameEl.textContent = data.roomName || data.roomCode;
+    $('#waiting-players').innerHTML = data.players.map(p => `<div class="waiting-player"><span class="wp-avatar">${p.avatar}</span><span class="wp-name">${escHtml(p.name)}</span>${p.isHost ? '<span class="wp-host">Host</span>' : ''}</div>`).join('');
+    const me = data.players.find(p => p.id === state.myId);
+    if (me?.isHost && data.players.length >= 2) {
+      $('#btn-start-game').style.display = 'flex';
+      $('#btn-start-game').textContent = `🚀 Start Game (${data.players.length}/${data.maxPlayers})`;
+    } else { $('#btn-start-game').style.display = 'none'; }
+  } else if (['question','guess'].includes(data.phase)) {
+    showScreen('game');
+    $('#game-round-badge').textContent = `Round ${data.currentRound}/${data.totalRounds}`;
+    renderGameContent(data);
+    updateLB(data.players); updatePL(data.players);
+  }
+});
+
+socket.on('guess-results', ({ results, correctAnswer, question, scores, anyCorrect }) => {
+  clearInterval(state.timerInterval);
+
+  // ─── Helper functions ───
+  function matchBadge(r) {
+    if (r.matchType === 'exact') return '<span class="match-badge match-exact">Perfect Match 🔥 +2</span>';
+    if (r.matchType === 'partial') return '<span class="match-badge match-partial">Close Match 👍 +1</span>';
+    return '<span class="match-badge match-none">No Match ❌ 0</span>';
+  }
+  function matchScoreLabel(r) {
+    if (r.matchScore === 2) return '<span class="rr-points rr-points-full">+2</span>';
+    if (r.matchScore === 1) return '<span class="rr-points rr-points-half">+1</span>';
+    return '<span class="rr-points rr-points-zero">+0</span>';
+  }
+
+  const my = results[state.myId];
+  const myGuess = my ? (my.guess || '—') : '—';
+  const myMatchType = my ? my.matchType : 'none';
+
+  // Determine result text
+  let resultLabel = 'No Match ❌ 0', resultClass = 'result-none', resultSub = 'Better luck next time!';
+  if (myMatchType === 'exact') { resultLabel = 'Perfect Match 🔥 +2'; resultClass = 'result-exact'; resultSub = 'You nailed it! +2 points'; }
+  else if (myMatchType === 'partial') { resultLabel = 'Close Match 👍 +1'; resultClass = 'result-partial'; resultSub = 'Almost there! +1 point'; }
+
+  // ═══════════════════════════════════════════════════════════
+  // PHASE 1 (0ms): Show question + HIDDEN answer card
+  // ═══════════════════════════════════════════════════════════
+  let h = '';
+
+  // Question display
+  h += `<div class="game-question-display"><div class="q-label">Question</div><div class="q-text">${escHtml(question)}</div></div>`;
+
+  // Answer card — starts HIDDEN (not flipped), will flip in Phase 2
+  h += `<div class="answer-card-wrapper">
+    <div class="answer-card" id="answer-card-reveal">
+      <div class="answer-card-inner">
+        <div class="answer-card-front">
+          <div class="answer-card-icon">🔒</div>
+          <div class="answer-card-label">Answer Hidden</div>
+          <div class="answer-card-masked">• • • • •</div>
+        </div>
+        <div class="answer-card-back">
+          <div class="answer-card-icon">✨</div>
+          <div class="answer-card-label">Answer Revealed</div>
+          <div class="answer-card-value">${escHtml(correctAnswer)}</div>
+        </div>
+      </div>
+    </div>
+  </div>`;
+
+  // ═══ COMPARISON CARDS — hidden initially, shown after answer flip ═══
+  if (my) {
+    h += `<div class="answer-compare-row" id="compare-row" style="display:none">
+      <div class="answer-compare-card card-friend">
+        <div class="compare-card-icon">💬</div>
+        <div class="compare-card-label">Correct Answer</div>
+        <div class="compare-card-value">${escHtml(correctAnswer)}</div>
+      </div>
+      <div class="compare-vs">VS</div>
+      <div class="answer-compare-card card-mine" id="my-answer-card">
+        <div class="compare-card-icon">🎯</div>
+        <div class="compare-card-label">Your Guess</div>
+        <div class="compare-card-value">${escHtml(myGuess)}</div>
+      </div>
+    </div>`;
+
+    // Result score text — hidden initially
+    h += `<div class="compare-result-text" id="compare-result-text">
+      <div class="compare-result-label ${resultClass}">${resultLabel}</div>
+      <div class="compare-result-sub">${resultSub}</div>
+    </div>`;
+  }
+
+  // Results card — all players' guesses with scores/badges hidden
+  h += `<div class="results-card"><h4>All Guesses</h4>`;
+  Object.values(results).forEach(r => {
+    h += `<div class="result-row">
+      <span class="rr-name">${escHtml(r.playerName)}</span>
+      <span class="rr-guess">${escHtml(r.guess||'—')}</span>
+      <span class="rr-score-slot phase-hidden">${matchScoreLabel(r)}</span>
+      <span class="rr-badge-slot phase-hidden">${matchBadge(r)}</span>
+    </div>`;
+  });
+  h += '</div>';
+
+  $('#game-content').innerHTML = h;
+
+  // ═══════════════════════════════════════════════════════════
+  // PHASE 2 (800ms): FLIP the answer card to reveal correct answer
+  // ═══════════════════════════════════════════════════════════
+  setTimeout(() => {
+    const card = document.getElementById('answer-card-reveal');
+    if (card) card.classList.add('flipped');
+    sfx('click');
+  }, 800);
+
+  // ═══════════════════════════════════════════════════════════
+  // PHASE 2.5 (1800ms): Show comparison cards (neutral colors)
+  // ═══════════════════════════════════════════════════════════
+  setTimeout(() => {
+    const row = document.getElementById('compare-row');
+    if (row) row.style.display = 'flex';
+  }, 1800);
+
+  // ═══════════════════════════════════════════════════════════
+  // PHASE 3 (3500ms): Apply color feedback + reveal scores
+  // ═══════════════════════════════════════════════════════════
+  setTimeout(() => {
+    // Apply color feedback to "Your Answer" card
+    const myCard = document.getElementById('my-answer-card');
+    if (myCard) {
+      myCard.classList.add(`match-result-${myMatchType}`);
+    }
+
+    // Reveal the result text with bounce animation
+    const resultText = document.getElementById('compare-result-text');
+    if (resultText) resultText.classList.add('revealed');
+
+    // Reveal all hidden score/badge elements in result rows
+    document.querySelectorAll('.phase-hidden').forEach(el => {
+      el.classList.remove('phase-hidden');
+      el.classList.add('phase-reveal');
+    });
+
+    // Sound effects based on match result
+    if (my?.matchType === 'exact') sfx('correct');
+    else if (my?.matchType === 'partial') sfx('click');
+    else if (my) sfx('wrong');
+
+    // Update leaderboard data
+    if (anyCorrect) updateLB(scores, results);
+  }, 3500);
+  // NOTE: Colors are applied via classList.add and will PERSIST
+  // until the server sends the next room-state (at ~10s), which
+  // replaces game-content innerHTML. No early clearing occurs.
+
+  // ═══════════════════════════════════════════════════════════
+  // PHASE 4 (6500ms): Show leaderboard briefly if someone scored
+  // ═══════════════════════════════════════════════════════════
+  if (anyCorrect) {
+    setTimeout(() => openPopup('leaderboard'), 6500);
+    setTimeout(() => closePopup('leaderboard'), 8500);
+  }
+
+  // Server auto-advances to next question at 10000ms
+});
+
+socket.on('game-over', ({ winner, scores }) => {
+  clearInterval(state.timerInterval); sfx('winner');
+  $('#gameover-title').textContent = winner.id === state.myId ? '🎉 You Won!' : 'Game Over!';
+  $('#gameover-winner').innerHTML = `${winner.avatar} <strong>${escHtml(winner.name)}</strong> wins with ${winner.score} pts!`;
+  $('#gameover-scores').innerHTML = scores.map((s,i) => `<div class="lb-row${s.id===winner.id?' highlight':''}"><span class="lb-rank ${['gold','silver','bronze'][i]||''}">#${i+1}</span><span class="lb-avatar">${s.avatar}</span><div class="lb-info"><div class="lb-name">${escHtml(s.name)}</div></div><span class="lb-score">${s.score}</span></div>`).join('');
+  openPopup('gameover');
+  const hi = { date: new Date().toLocaleString(), result: winner.id === state.myId ? '🏆 Won!' : `${winner.name} won`, score: scores.find(s => s.id === state.myId)?.score || 0, players: scores.length };
+  state.history.unshift(hi); if (state.history.length > 30) state.history.pop();
+  localStorage.setItem('ms-history', JSON.stringify(state.history));
+});
+
+// ── Emoji with name ──
+socket.on('emoji-reaction', ({ playerName, emoji }) => {
+  // Floating emoji
+  const el = document.createElement('div'); el.className = 'floating-emoji';
+  el.innerHTML = `<span style="font-size:32px">${emoji}</span><span style="font-size:11px;display:block;color:#fff;text-shadow:0 1px 4px rgba(0,0,0,.7);margin-top:-4px">${escHtml(playerName)}</span>`;
+  el.style.left = (15 + Math.random() * 70) + '%'; el.style.bottom = '12%';
+  $('#emoji-float-container').appendChild(el); setTimeout(() => el.remove(), 2200);
+  // Toast
+  showToast(`${playerName} sent ${emoji}`, 1500);
+});
+
+// ── Player left ──
+socket.on('player-left', ({ playerName, remainingPlayers }) => {
+  showToast(`${playerName} left the game`, 3000);
+});
+
+// ── Force exit game (server removed this player) ──
+socket.on('force-exit-game', ({ reason }) => {
+  clearInterval(state.timerInterval);
+  closeAllPopups();
+  showToast(reason || 'Game ended', 4000);
+  cleanupAndGoHome();
+});
+
+// ── Game ended (not enough players etc) ──
+socket.on('game-ended', ({ reason }) => {
+  clearInterval(state.timerInterval);
+  closeAllPopups();
+  showToast(reason || 'Game ended', 4000);
+  setTimeout(() => goHome(), 1500);
+});
+
+// ── Remove player from room (cleanup event) ──
+socket.on('remove-player-from-room', ({ playerId }) => {
+  if (playerId === state.myId) {
+    state.hasLeftRoom = true;
+    state.roomCode = null;
+  }
+});
+
+// ── Update turn queue ──
+socket.on('update-turn-queue', ({ activePlayers }) => {
+  // Update player list display if popup is open
+  if (state.lastRoomState) {
+    state.lastRoomState.players = activePlayers;
+  }
+});
+
+// ── Room closed (force exit) ──
+socket.on('room-closed', ({ reason }) => {
+  if (state.hasLeftRoom) return;
+  clearInterval(state.timerInterval);
+  closeAllPopups();
+  showToast(reason || 'Room closed', 4000);
+  setTimeout(() => goHome(), 1500);
+});
+
+// ── Name changed ──
+socket.on('name-changed', ({ oldName, newName }) => {
+  if (newName !== state.playerName) showToast(`${oldName} → ${newName}`, 2000);
+});
+
+// ── Play again ──
+socket.on('play-again-request', ({ fromName }) => {
+  $('#play-again-text').textContent = `${fromName} wants to play again!`;
+  openPopup('play-again');
+  let t = 4000; const f = $('#play-again-timer-fill'); f.style.width = '100%';
+  const iv = setInterval(() => { t -= 100; f.style.width = (t/4000*100)+'%'; if (t <= 0) { clearInterval(iv); closePopup('play-again'); socket.emit('play-again-reject', { roomCode: state.roomCode }); } }, 100);
+  state._pat = iv;
+});
+socket.on('play-again-start', () => { closeAllPopups(); showToast('New game starting!'); });
+socket.on('play-again-rejected', ({ byName }) => showToast(`${byName} declined`));
+socket.on('play-again-error', msg => showToast('❌ ' + msg));
+
+function requestPlayAgain() {
+  // Check if there are other players
+  if (state.lastRoomState) {
+    const others = state.lastRoomState.players.filter(p => p.id !== state.myId);
+    if (others.length < 1) {
+      showToast('No players available to play');
+      return;
+    }
+  }
+  socket.emit('play-again-request', { roomCode: state.roomCode });
+  socket.emit('play-again-accept', { roomCode: state.roomCode });
+  showToast('Waiting for others…');
+  sfx('click');
+}
+function acceptPlayAgain() { clearInterval(state._pat); closePopup('play-again'); socket.emit('play-again-accept', { roomCode: state.roomCode }); showToast('Accepted!'); }
+function rejectPlayAgain() { clearInterval(state._pat); closePopup('play-again'); socket.emit('play-again-reject', { roomCode: state.roomCode }); }
+
+function updateLB(scores, results) {
+  const sorted = [...(Array.isArray(scores)?scores:[])].sort((a,b)=>b.score-a.score);
+  $('#leaderboard-list').innerHTML = sorted.map((s,i) => {
+    const r = results && results[s.id];
+    const got = r && (r.matchType === 'exact' || r.matchType === 'partial');
+    const plusLabel = r?.matchType === 'exact' ? '+2' : r?.matchType === 'partial' ? '+1' : '';
+    return `<div class="lb-row${got?' highlight':''}"><span class="lb-rank ${['gold','silver','bronze'][i]||''}">#${i+1}</span><span class="lb-avatar">${s.avatar}</span><div class="lb-info"><div class="lb-name">${escHtml(s.name)}</div><div class="lb-score-label">${s.score} pts</div></div><span class="lb-score">${s.score}</span>${got?`<span class="lb-plus">${plusLabel}</span>`:''}</div>`;
+  }).join('');
+}
+function updatePL(players) {
+  $('#players-popup-list').innerHTML = (Array.isArray(players)?players:[]).map(p => `<div class="lb-row"><span class="lb-avatar">${p.avatar}</span><div class="lb-info"><div class="lb-name">${escHtml(p.name)}</div></div><span class="lb-score">${p.score}</span></div>`).join('');
+}
+
+// ─── PWA ───
+let deferredPrompt = null;
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferredPrompt = e; $('#btn-install-topbar').style.display = 'flex'; });
+function installApp() { if (!deferredPrompt) return showToast('Not available'); deferredPrompt.prompt(); deferredPrompt.userChoice.then(() => { deferredPrompt = null; $('#btn-install-topbar').style.display = 'none'; }); }
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/service-worker.js').catch(()=>{});
+
+// ─── Boot ───
+document.addEventListener('DOMContentLoaded', () => { initUI(); document.addEventListener('click', () => initSounds(), { once: true }); });
