@@ -303,6 +303,30 @@ io.on('connection', (socket) => {
 
 // ─── Game Phase Functions ────────────────────────────────────
 
+// Timer duration constants (milliseconds)
+const QUESTION_TIMER_MS = 60000;  // 60 seconds for question + answer typing
+const GUESS_TIMER_MS    = 25000;  // 25 seconds for guessing
+
+function startTimerSync(roomCode, phase) {
+  const room = rooms[roomCode];
+  if (!room) return;
+  // Clear any previous sync interval
+  if (room.timerSyncRef) clearInterval(room.timerSyncRef);
+  // Emit timer-sync every 1 second so all clients stay in lockstep
+  room.timerSyncRef = setInterval(() => {
+    if (!rooms[roomCode] || room.phase !== phase) {
+      clearInterval(room.timerSyncRef);
+      room.timerSyncRef = null;
+      return;
+    }
+    io.to(roomCode).emit('timer-sync', {
+      timerEnd: room.timerEnd,
+      phase: room.phase,
+      serverTime: Date.now()
+    });
+  }, 1000);
+}
+
 function startQuestionPhase(roomCode) {
   const room = rooms[roomCode];
   if (!room) return;
@@ -331,9 +355,10 @@ function startQuestionPhase(roomCode) {
   room.currentQuestion = '';
   room.currentAnswer = '';
   room.guesses = {};
-  room.timerEnd = Date.now() + 35000;
+  room.timerEnd = Date.now() + QUESTION_TIMER_MS;
 
   broadcastRoomState(roomCode);
+  startTimerSync(roomCode, 'question');
 
   room.timerRef = setTimeout(() => {
     if (room.phase === 'question') {
@@ -341,7 +366,7 @@ function startQuestionPhase(roomCode) {
       room.currentAnswer = '';
       advanceTurn(roomCode);
     }
-  }, 36000);
+  }, QUESTION_TIMER_MS + 1000);
 }
 
 function startGuessPhase(roomCode) {
@@ -357,15 +382,117 @@ function startGuessPhase(roomCode) {
 
   room.phase = 'guess';
   room.guesses = {};
-  room.timerEnd = Date.now() + 25000;
+  room.timerEnd = Date.now() + GUESS_TIMER_MS;
 
   broadcastRoomState(roomCode);
+  startTimerSync(roomCode, 'guess');
 
   room.timerRef = setTimeout(() => {
     if (room.phase === 'guess') {
       resolveGuesses(roomCode);
     }
-  }, 26000);
+  }, GUESS_TIMER_MS + 1000);
+}
+
+// ─── Multi-Language Synonym Dictionary (English ↔ Tanglish) ──
+const synonyms = {
+  // Common words
+  yes:       ['ama', 'aama', 'aamaa', 'om'],
+  no:        ['illa', 'illai', 'illainga', 'venda'],
+  ok:        ['seri', 'sari', 'saringa', 'okey'],
+  good:      ['nalla', 'nalladhu', 'nallaa'],
+  bad:       ['ketta', 'kettadhu', 'mosam'],
+  come:      ['vaa', 'vaanga', 'vaango'],
+  go:        ['po', 'ponga', 'pongo'],
+  eat:       ['saapdu', 'saapidu', 'sapdu', 'thinna'],
+  sleep:     ['thoongu', 'thoonga', 'urangu'],
+  water:     ['thanni', 'tanneer', 'thaneer'],
+  food:      ['sapadu', 'saapadu', 'saappaadu', 'soru', 'sooru'],
+  friend:    ['nanban', 'nanba', 'machaan', 'machan', 'machi', 'da', 'thala'],
+  love:      ['kaadhal', 'kadhal', 'luv', 'anbu'],
+  happy:     ['santhosam', 'santosam', 'kushee', 'kushi'],
+  sad:       ['varuththam', 'sogam', 'sad'],
+  angry:     ['kovam', 'koovam', 'seenam'],
+  beautiful: ['azhagu', 'azhaga', 'sundaram', 'beauty'],
+  money:     ['panam', 'kaasu', 'money'],
+  home:      ['veedu', 'veetu', 'illam'],
+  mother:    ['amma', 'ammaa', 'thaayi', 'mom', 'mummy'],
+  father:    ['appa', 'appaa', 'thanthai', 'dad', 'daddy'],
+  brother:   ['anna', 'annaa', 'thambi', 'bro'],
+  sister:    ['akka', 'akkaa', 'thangai', 'sis'],
+  school:    ['palli', 'school'],
+  study:     ['padippu', 'padipu', 'padi'],
+  work:      ['velai', 'velaai', 'pannunga'],
+  big:       ['periya', 'perisu'],
+  small:     ['chinna', 'sinna', 'chinnadhu'],
+  fast:      ['vegam', 'vegama', 'seekiram'],
+  slow:      ['methuvaa', 'methava', 'nidhanam'],
+  hot:       ['soodu', 'sudu'],
+  cold:      ['kulir', 'thanuppu', 'thanuppa'],
+  rain:      ['mazhai', 'malai'],
+  sun:       ['suriyan', 'suryan', 'veyyil'],
+  night:     ['iravu', 'ratri'],
+  morning:   ['kaalai', 'kalai'],
+  dog:       ['naai', 'nai', 'naayi'],
+  cat:       ['poonai', 'punai'],
+  car:       ['car', 'vandi'],
+  movie:     ['padam', 'cinema', 'film'],
+  song:      ['paatu', 'paattu', 'isai'],
+  game:      ['aatam', 'aatam', 'vilaiyaattu'],
+  win:       ['jei', 'vetri', 'jeyippu'],
+  lose:      ['tholu', 'tholvi', 'failure'],
+  thanks:    ['nandri', 'nanri', 'romba thanks'],
+  sorry:     ['mannichu', 'mannikunga', 'mannichuko'],
+  what:      ['enna', 'yenna'],
+  why:       ['yen', 'yen'],
+  who:       ['yaaru', 'yaru'],
+  where:     ['enga', 'engae'],
+  when:      ['eppoo', 'eppo'],
+  how:       ['eppadi', 'yeppadi'],
+  this:      ['idhu', 'idha'],
+  that:      ['adhu', 'adha'],
+  today:     ['innaiku', 'innikku', 'indru'],
+  tomorrow:  ['naalaikku', 'naalai', 'nalaikku'],
+  yesterday: ['nethu', 'netrikku', 'netru'],
+  true:      ['unmai', 'nijam'],
+  false:     ['poi', 'poy'],
+  wait:      ['iru', 'irukku', 'podhu'],
+  stop:      ['nillu', 'nillungo', 'niruthu'],
+  run:       ['oodu', 'oodu'],
+  walk:      ['nadai', 'nada'],
+  talk:      ['pesu', 'paesu', 'pesungo'],
+  laugh:     ['siri', 'sirippu', 'chiragu'],
+  cry:       ['azhu', 'alagu'],
+  fight:     ['sandai', 'sanda'],
+  dance:     ['aadu', 'naatyam', 'dance'],
+  tea:       ['tea', 'chai', 'theneer'],
+  coffee:    ['kaapi', 'coffee'],
+  rice:      ['arisi', 'soru', 'sooru', 'saadham'],
+  chicken:   ['kozhi', 'chicken'],
+  fish:      ['meen', 'meenu'],
+};
+
+// Build a reverse lookup: for each synonym word → its canonical key
+const synonymReverseLookup = {};
+for (const [key, synonymsList] of Object.entries(synonyms)) {
+  // Key itself maps to key
+  synonymReverseLookup[key] = key;
+  for (const syn of synonymsList) {
+    synonymReverseLookup[syn.toLowerCase()] = key;
+  }
+}
+
+function areSynonyms(wordA, wordB) {
+  // Check if both words map to the same canonical key
+  const keyA = synonymReverseLookup[wordA];
+  const keyB = synonymReverseLookup[wordB];
+  if (keyA && keyB && keyA === keyB) return true;
+
+  // Also check if wordA is in the synonym list of wordB's entry (or vice versa)
+  if (synonyms[wordA] && synonyms[wordA].includes(wordB)) return true;
+  if (synonyms[wordB] && synonyms[wordB].includes(wordA)) return true;
+
+  return false;
 }
 
 // ─── Smart Answer Matching (2/1/0 scoring) ───────────────────
@@ -395,25 +522,40 @@ function smartMatch(guess, answer) {
   // 1. Exact match (ignore case & spaces) → 2 points
   if (g === a) return { score: 2, type: 'exact' };
 
-  // 2. Partial match — one contains the other → 1 point
+  // 2. Synonym/multi-language match → 2 points (Tanglish ↔ English)
+  if (areSynonyms(g, a)) return { score: 2, type: 'exact' };
+
+  // 2b. Multi-word synonym check: split into words and check if all words match via synonyms
+  const gWords = g.split(/\s+/).filter(Boolean);
+  const aWords = a.split(/\s+/).filter(Boolean);
+  if (gWords.length === aWords.length && gWords.length > 0) {
+    const allWordsMatch = gWords.every((gw, i) => gw === aWords[i] || areSynonyms(gw, aWords[i]));
+    if (allWordsMatch) return { score: 2, type: 'exact' };
+  }
+
+  // 3. Partial match — one contains the other → 1 point
   if (g.includes(a) || a.includes(g)) return { score: 1, type: 'partial' };
 
-  // 3. Plural normalization check → 1 point
+  // 4. Plural normalization check → 1 point
   if (stripPlural(g) === stripPlural(a)) return { score: 1, type: 'partial' };
 
-  // 4. Small typo check (edit distance ≤ 2 for short words, ≤ 3 for longer) → 1 point
+  // 5. Small typo check (edit distance ≤ 2 for short words, ≤ 3 for longer) → 1 point
   const maxDist = Math.max(a.length, g.length) <= 6 ? 1 : 2;
   if (editDistance(g, a) <= maxDist) return { score: 1, type: 'partial' };
 
-  // 5. Word-level overlap check → 1 point
-  const gWords = g.split(/\s+/).filter(Boolean);
-  const aWords = a.split(/\s+/).filter(Boolean);
+  // 6. Word-level overlap check → 1 point
   const common = gWords.filter(w => aWords.includes(w));
   if (common.length > 0 && (common.length / Math.max(gWords.length, aWords.length)) >= 0.5) {
     return { score: 1, type: 'partial' };
   }
 
-  // 6. No match → 0 points
+  // 7. Word-level synonym overlap → 1 point
+  const synonymCommon = gWords.filter(gw => aWords.some(aw => areSynonyms(gw, aw)));
+  if (synonymCommon.length > 0 && (synonymCommon.length / Math.max(gWords.length, aWords.length)) >= 0.5) {
+    return { score: 1, type: 'partial' };
+  }
+
+  // 8. No match → 0 points
   return { score: 0, type: 'none' };
 }
 
@@ -509,6 +651,7 @@ function endGame(roomCode) {
 
   room.phase = 'gameEnd';
   clearTimeout(room.timerRef);
+  if (room.timerSyncRef) { clearInterval(room.timerSyncRef); room.timerSyncRef = null; }
 
   const active = getActivePlayers(room);
   const sorted = [...active].sort((a, b) => b.score - a.score);
@@ -531,6 +674,7 @@ function forceEndGame(roomCode, reason) {
 
   room.phase = 'gameEnd';
   clearTimeout(room.timerRef);
+  if (room.timerSyncRef) { clearInterval(room.timerSyncRef); room.timerSyncRef = null; }
 
   // Emit specific events for client-side handling
   io.to(roomCode).emit('game-ended', { reason });
@@ -545,6 +689,8 @@ function forceEndGame(roomCode, reason) {
 function cleanupRoom(roomCode) {
   const room = rooms[roomCode];
   if (!room) return;
+  clearTimeout(room.timerRef);
+  if (room.timerSyncRef) { clearInterval(room.timerSyncRef); room.timerSyncRef = null; }
   room.players.forEach(p => {
     delete playerSockets[p.id];
   });
@@ -611,6 +757,7 @@ function handleLeave(socket, roomCode, isDisconnect = false) {
   // ═══ STEP 7: Room empty → delete immediately ═══
   if (active.length === 0) {
     clearTimeout(room.timerRef);
+    if (room.timerSyncRef) { clearInterval(room.timerSyncRef); room.timerSyncRef = null; }
     delete rooms[roomCode];
     io.emit('rooms-updated');
     console.log(`[Room] ${roomCode} deleted (empty)`);
@@ -632,6 +779,7 @@ function handleLeave(socket, roomCode, isDisconnect = false) {
     // 4-player mode: dropped below 2 → game over
     // ──────────────────────────────────────────────
     clearTimeout(room.timerRef);
+    if (room.timerSyncRef) { clearInterval(room.timerSyncRef); room.timerSyncRef = null; }
     room.phase = 'gameEnd';
 
     const reason = `${leavingName} left the game. Not enough players to continue.`;

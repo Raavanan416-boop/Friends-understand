@@ -2,6 +2,12 @@
 const socket = io();
 const AVATARS = ['😀','😎','🤩','🥳','😈','👻','🤖','👽','🦊','🐱','🐶','🦁','🐸','🐧','🦄','🌟','🔥','💎','🎯','🎮'];
 const SOUNDS = {};
+
+// Timer constants (must match server)
+const QUESTION_TIMER_MS = 60000;
+const GUESS_TIMER_MS    = 25000;
+const QUESTION_WARN_SEC = 10; // Red warning at last 10s for question phase
+const GUESS_WARN_SEC    = 5;  // Pulse warning at last 5s for guess phase
 let state = {
   playerName: localStorage.getItem('ms-name') || '',
   avatar: localStorage.getItem('ms-avatar') || '😀',
@@ -251,15 +257,27 @@ function goHome() {
 function startGame() { socket.emit('start-game', { roomCode: state.roomCode }); sfx('click'); }
 
 // ─── Timer ───
-function startTimer(endTime, totalMs) {
+function startTimer(endTime, totalMs, warnSec) {
   clearInterval(state.timerInterval);
+  if (state._lastWarnSfxSec) state._lastWarnSfxSec = 0;
   const fill = $('#timer-fill'), text = $('#timer-text');
+  const warnThreshold = warnSec || 5;
   function tick() {
     const rem = Math.max(0, endTime - Date.now());
     const pct = (rem / totalMs) * 100, secs = Math.ceil(rem / 1000);
     fill.style.width = pct + '%'; text.textContent = secs + 's';
-    if (secs <= 5) { fill.classList.add('warning'); text.classList.add('warning'); if (secs === 5) sfx('timerWarn'); }
-    else { fill.classList.remove('warning'); text.classList.remove('warning'); }
+    if (secs <= warnThreshold && secs > 0) {
+      fill.classList.add('warning');
+      text.classList.add('warning');
+      // Play warning sound once when entering the warning zone
+      if (secs === warnThreshold && state._lastWarnSfxSec !== warnThreshold) {
+        sfx('timerWarn');
+        state._lastWarnSfxSec = warnThreshold;
+      }
+    } else {
+      fill.classList.remove('warning');
+      text.classList.remove('warning');
+    }
     if (rem <= 0) clearInterval(state.timerInterval);
   }
   tick(); state.timerInterval = setInterval(tick, 200);
@@ -287,7 +305,7 @@ function renderGameContent(data) {
     } else {
       gc.innerHTML = `<div class="waiting-turn-msg"><span class="wtm-emoji">🤔</span><p><strong>${escHtml(tp)}</strong> is writing a question…</p></div>`;
     }
-    startTimer(data.timerEnd, 35000);
+    startTimer(data.timerEnd, QUESTION_TIMER_MS, QUESTION_WARN_SEC);
   } else if (data.phase === 'guess') {
     if (isMyTurn) {
       gc.innerHTML = `<div class="game-question-display"><div class="q-label">Your Question</div><div class="q-text">${escHtml(data.question)}</div></div>
@@ -324,7 +342,7 @@ function renderGameContent(data) {
         $('#btn-submit-guess').disabled = true; $('#btn-submit-guess').textContent = 'Submitted ✓'; sfx('click');
       };
     }
-    startTimer(data.timerEnd, 25000);
+    startTimer(data.timerEnd, GUESS_TIMER_MS, GUESS_WARN_SEC);
   } else if (data.phase === 'waiting') {
     gc.innerHTML = `<div class="waiting-turn-msg"><span class="wtm-emoji">🎮</span><p>Waiting for host…</p></div>`;
   }
@@ -332,6 +350,30 @@ function renderGameContent(data) {
 
 // ─── Socket Events ───
 socket.on('connect', () => { state.myId = socket.id; });
+
+// ─── Timer Sync (server-driven lockstep) ───
+socket.on('timer-sync', ({ timerEnd, phase, serverTime }) => {
+  // Calculate offset between server time and local time
+  const offset = Date.now() - serverTime;
+  const correctedEnd = timerEnd + offset;
+  const fill = $('#timer-fill'), text = $('#timer-text');
+  if (!fill || !text) return;
+  // Only update if we're in the matching phase
+  const totalMs = phase === 'question' ? QUESTION_TIMER_MS : GUESS_TIMER_MS;
+  const warnSec = phase === 'question' ? QUESTION_WARN_SEC : GUESS_WARN_SEC;
+  const rem = Math.max(0, correctedEnd - Date.now());
+  const pct = (rem / totalMs) * 100;
+  const secs = Math.ceil(rem / 1000);
+  fill.style.width = pct + '%';
+  text.textContent = secs + 's';
+  if (secs <= warnSec && secs > 0) {
+    fill.classList.add('warning');
+    text.classList.add('warning');
+  } else {
+    fill.classList.remove('warning');
+    text.classList.remove('warning');
+  }
+});
 
 socket.on('room-created', ({ roomCode }) => {
   state.roomCode = roomCode; state.hasLeftRoom = false; closeAllPanels(); showScreen('waiting'); showToast('Room created!');
