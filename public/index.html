@@ -52,6 +52,13 @@
         <h1 class="app-title">Mind Sync</h1>
       </div>
       <div class="top-bar-right">
+        <div class="coin-badge" id="home-coin-badge" title="Your Coins">
+          <span class="coin-icon">💰</span>
+          <span class="coin-count" id="home-coin-count">0</span>
+        </div>
+        <button class="icon-btn" id="btn-coin-shop" title="Coin Shop">
+          🛒
+        </button>
         <button class="icon-btn" id="btn-history" title="History">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="9"/><path d="M1 4v4h4"/><path d="M3.51 15a9 9 0 1 0 .49-7.5L1 8"/></svg>
         </button>
@@ -162,6 +169,56 @@
     </div>
   </div>
 
+  <!-- ═══════ COIN SHOP PANEL ═══════ -->
+  <div class="slide-panel" id="panel-coinshop">
+    <div class="panel-overlay"></div>
+    <div class="panel-content glass-card">
+      <div class="panel-handle"></div>
+      <h2 class="panel-title">🛒 Coin Shop</h2>
+      <div class="coin-shop-balance">
+        <span class="coin-icon-lg">💰</span>
+        <span class="coin-balance-value" id="shop-coin-balance">0</span>
+        <span class="coin-balance-label">coins</span>
+      </div>
+      <div class="shop-section-title">⚡ Advantages</div>
+      <div class="shop-items">
+        <div class="shop-item">
+          <div class="shop-item-icon">👀</div>
+          <div class="shop-item-info">
+            <div class="shop-item-name">Reveal Answer</div>
+            <div class="shop-item-desc">See the answer before guessing</div>
+          </div>
+          <div class="shop-item-cost">25 💰</div>
+        </div>
+        <div class="shop-item">
+          <div class="shop-item-icon">🔤</div>
+          <div class="shop-item-info">
+            <div class="shop-item-name">Hint Letters</div>
+            <div class="shop-item-desc">Reveal first & last letter</div>
+          </div>
+          <div class="shop-item-cost">15 💰</div>
+        </div>
+        <div class="shop-item">
+          <div class="shop-item-icon">⏳</div>
+          <div class="shop-item-info">
+            <div class="shop-item-name">Extra Time</div>
+            <div class="shop-item-desc">+15 seconds to guess</div>
+          </div>
+          <div class="shop-item-cost">10 💰</div>
+        </div>
+        <div class="shop-item">
+          <div class="shop-item-icon">✨</div>
+          <div class="shop-item-info">
+            <div class="shop-item-name">Double Points</div>
+            <div class="shop-item-desc">2x points for next correct guess</div>
+          </div>
+          <div class="shop-item-cost">30 💰</div>
+        </div>
+      </div>
+      <p class="shop-note">Use advantages during the guessing phase!</p>
+    </div>
+  </div>
+
   <!-- ═══════ WAITING ROOM ═══════ -->
   <section id="screen-waiting" class="screen">
     <header class="top-bar glass-bar">
@@ -193,6 +250,10 @@
     <header class="game-top-bar glass-bar">
       <div class="game-top-left">
         <span class="game-round-badge" id="game-round-badge">Round 1/3</span>
+        <div class="coin-badge coin-badge-game" id="game-coin-badge">
+          <span class="coin-icon">💰</span>
+          <span class="coin-count" id="game-coin-count">0</span>
+        </div>
       </div>
       <div class="game-top-right">
         <button class="game-top-btn" id="btn-players-list" title="Players">👥</button>

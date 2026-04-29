@@ -215,6 +215,22 @@ io.on('connection', (socket) => {
     }
   });
 
+  // ── Use Advantage: Reveal Answer ──
+  socket.on('use-reveal', ({ roomCode }) => {
+    const room = rooms[roomCode];
+    if (!room || room.phase !== 'guess') return;
+    const activePlayers = getActivePlayers(room);
+    const turnPlayerId = activePlayers[room.currentTurnPlayerIndex]?.id;
+    // Only non-turn players can reveal
+    if (socket.id === turnPlayerId) return;
+    // Track who used reveal to prevent double use
+    if (!room.revealUsed) room.revealUsed = {};
+    if (room.revealUsed[socket.id]) return;
+    room.revealUsed[socket.id] = true;
+    // Send the real answer ONLY to this player
+    socket.emit('reveal-answer', { answer: room.currentAnswer });
+  });
+
   // ── Emoji Reaction (with name) ──
   socket.on('emoji-reaction', ({ roomCode, emoji }) => {
     const info = playerSockets[socket.id];
@@ -382,6 +398,7 @@ function startGuessPhase(roomCode) {
 
   room.phase = 'guess';
   room.guesses = {};
+  room.revealUsed = {};
   room.timerEnd = Date.now() + GUESS_TIMER_MS;
 
   broadcastRoomState(roomCode);
@@ -394,108 +411,45 @@ function startGuessPhase(roomCode) {
   }, GUESS_TIMER_MS + 1000);
 }
 
-// ─── Multi-Language Synonym Dictionary (English ↔ Tanglish) ──
-const synonyms = {
-  // Common words
-  yes:       ['ama', 'aama', 'aamaa', 'om'],
-  no:        ['illa', 'illai', 'illainga', 'venda'],
-  ok:        ['seri', 'sari', 'saringa', 'okey'],
-  good:      ['nalla', 'nalladhu', 'nallaa'],
-  bad:       ['ketta', 'kettadhu', 'mosam'],
-  come:      ['vaa', 'vaanga', 'vaango'],
-  go:        ['po', 'ponga', 'pongo'],
-  eat:       ['saapdu', 'saapidu', 'sapdu', 'thinna'],
-  sleep:     ['thoongu', 'thoonga', 'urangu'],
-  water:     ['thanni', 'tanneer', 'thaneer'],
-  food:      ['sapadu', 'saapadu', 'saappaadu', 'soru', 'sooru'],
-  friend:    ['nanban', 'nanba', 'machaan', 'machan', 'machi', 'da', 'thala'],
-  love:      ['kaadhal', 'kadhal', 'luv', 'anbu'],
-  happy:     ['santhosam', 'santosam', 'kushee', 'kushi'],
-  sad:       ['varuththam', 'sogam', 'sad'],
-  angry:     ['kovam', 'koovam', 'seenam'],
-  beautiful: ['azhagu', 'azhaga', 'sundaram', 'beauty'],
-  money:     ['panam', 'kaasu', 'money'],
-  home:      ['veedu', 'veetu', 'illam'],
-  mother:    ['amma', 'ammaa', 'thaayi', 'mom', 'mummy'],
-  father:    ['appa', 'appaa', 'thanthai', 'dad', 'daddy'],
-  brother:   ['anna', 'annaa', 'thambi', 'bro'],
-  sister:    ['akka', 'akkaa', 'thangai', 'sis'],
-  school:    ['palli', 'school'],
-  study:     ['padippu', 'padipu', 'padi'],
-  work:      ['velai', 'velaai', 'pannunga'],
-  big:       ['periya', 'perisu'],
-  small:     ['chinna', 'sinna', 'chinnadhu'],
-  fast:      ['vegam', 'vegama', 'seekiram'],
-  slow:      ['methuvaa', 'methava', 'nidhanam'],
-  hot:       ['soodu', 'sudu'],
-  cold:      ['kulir', 'thanuppu', 'thanuppa'],
-  rain:      ['mazhai', 'malai'],
-  sun:       ['suriyan', 'suryan', 'veyyil'],
-  night:     ['iravu', 'ratri'],
-  morning:   ['kaalai', 'kalai'],
-  dog:       ['naai', 'nai', 'naayi'],
-  cat:       ['poonai', 'punai'],
-  car:       ['car', 'vandi'],
-  movie:     ['padam', 'cinema', 'film'],
-  song:      ['paatu', 'paattu', 'isai'],
-  game:      ['aatam', 'aatam', 'vilaiyaattu'],
-  win:       ['jei', 'vetri', 'jeyippu'],
-  lose:      ['tholu', 'tholvi', 'failure'],
-  thanks:    ['nandri', 'nanri', 'romba thanks'],
-  sorry:     ['mannichu', 'mannikunga', 'mannichuko'],
-  what:      ['enna', 'yenna'],
-  why:       ['yen', 'yen'],
-  who:       ['yaaru', 'yaru'],
-  where:     ['enga', 'engae'],
-  when:      ['eppoo', 'eppo'],
-  how:       ['eppadi', 'yeppadi'],
-  this:      ['idhu', 'idha'],
-  that:      ['adhu', 'adha'],
-  today:     ['innaiku', 'innikku', 'indru'],
-  tomorrow:  ['naalaikku', 'naalai', 'nalaikku'],
-  yesterday: ['nethu', 'netrikku', 'netru'],
-  true:      ['unmai', 'nijam'],
-  false:     ['poi', 'poy'],
-  wait:      ['iru', 'irukku', 'podhu'],
-  stop:      ['nillu', 'nillungo', 'niruthu'],
-  run:       ['oodu', 'oodu'],
-  walk:      ['nadai', 'nada'],
-  talk:      ['pesu', 'paesu', 'pesungo'],
-  laugh:     ['siri', 'sirippu', 'chiragu'],
-  cry:       ['azhu', 'alagu'],
-  fight:     ['sandai', 'sanda'],
-  dance:     ['aadu', 'naatyam', 'dance'],
-  tea:       ['tea', 'chai', 'theneer'],
-  coffee:    ['kaapi', 'coffee'],
-  rice:      ['arisi', 'soru', 'sooru', 'saadham'],
-  chicken:   ['kozhi', 'chicken'],
-  fish:      ['meen', 'meenu'],
-};
+// ═══════════════════════════════════════════════════════════════
+// ─── ADVANCED AI-STYLE MULTI-LANGUAGE MATCHING ENGINE ────────
+// ═══════════════════════════════════════════════════════════════
 
-// Build a reverse lookup: for each synonym word → its canonical key
-const synonymReverseLookup = {};
-for (const [key, synonymsList] of Object.entries(synonyms)) {
-  // Key itself maps to key
-  synonymReverseLookup[key] = key;
-  for (const syn of synonymsList) {
-    synonymReverseLookup[syn.toLowerCase()] = key;
-  }
+// ── 1. TEXT NORMALIZATION ─────────────────────────────────────
+function normalize(text) {
+  if (!text) return '';
+  return text
+    .toLowerCase()
+    .trim()
+    .replace(/[^\w\s]/g, '')   // remove punctuation
+    .replace(/\s+/g, ' ')      // collapse multiple spaces
+    .trim();
 }
 
-function areSynonyms(wordA, wordB) {
-  // Check if both words map to the same canonical key
-  const keyA = synonymReverseLookup[wordA];
-  const keyB = synonymReverseLookup[wordB];
-  if (keyA && keyB && keyA === keyB) return true;
-
-  // Also check if wordA is in the synonym list of wordB's entry (or vice versa)
-  if (synonyms[wordA] && synonyms[wordA].includes(wordB)) return true;
-  if (synonyms[wordB] && synonyms[wordB].includes(wordA)) return true;
-
-  return false;
+// ── 2. TANGLISH PHONETIC NORMALIZATION ───────────────────────
+// Collapses vowel stretching, double consonants, and common
+// Tanglish spelling variations so "aaamaa" ≈ "ama" ≈ "aama"
+function phoneticsNormalize(word) {
+  let w = word.toLowerCase().trim();
+  // Collapse repeated vowels: "aaa" → "a", "ooo" → "o", "eee" → "e"
+  w = w.replace(/([aeiou])\1+/g, '$1');
+  // Collapse repeated consonants: "nnn" → "n", "ppp" → "p"
+  w = w.replace(/([^aeiou\s])\1+/g, '$1');
+  // Normalize common Tanglish phonetic variants
+  w = w.replace(/th/g, 't');    // "thanni" → "tani"
+  w = w.replace(/zh/g, 'l');    // "mazhai" → "malai"
+  w = w.replace(/sh/g, 's');    // "kushi" → "kusi"
+  w = w.replace(/ch/g, 's');    // "padichu" → "padisu"
+  w = w.replace(/dh/g, 'd');    // "saadham" → "sadam"
+  w = w.replace(/gh/g, 'g');
+  w = w.replace(/kh/g, 'k');
+  // Collapse again after substitutions
+  w = w.replace(/([aeiou])\1+/g, '$1');
+  w = w.replace(/([^aeiou\s])\1+/g, '$1');
+  return w;
 }
 
-// ─── Smart Answer Matching (2/1/0 scoring) ───────────────────
+// ── 3. LEVENSHTEIN DISTANCE & SIMILARITY RATIO ──────────────
 function editDistance(a, b) {
   const m = a.length, n = b.length;
   const dp = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
@@ -503,59 +457,219 @@ function editDistance(a, b) {
   for (let j = 0; j <= n; j++) dp[0][j] = j;
   for (let i = 1; i <= m; i++)
     for (let j = 1; j <= n; j++)
-      dp[i][j] = a[i-1] === b[j-1] ? dp[i-1][j-1] : 1 + Math.min(dp[i-1][j], dp[i][j-1], dp[i-1][j-1]);
+      dp[i][j] = a[i-1] === b[j-1]
+        ? dp[i-1][j-1]
+        : 1 + Math.min(dp[i-1][j], dp[i][j-1], dp[i-1][j-1]);
   return dp[m][n];
 }
 
+// Returns 0.0–1.0 similarity ratio
+function similarityRatio(a, b) {
+  if (!a && !b) return 1;
+  if (!a || !b) return 0;
+  const maxLen = Math.max(a.length, b.length);
+  if (maxLen === 0) return 1;
+  return 1 - editDistance(a, b) / maxLen;
+}
+
+// ── 4. ENGLISH WORD NORMALIZATION ────────────────────────────
 function stripPlural(w) {
   if (w.endsWith('ies')) return w.slice(0, -3) + 'y';
-  if (w.endsWith('es')) return w.slice(0, -2);
+  if (w.endsWith('es'))  return w.slice(0, -2);
   if (w.endsWith('s') && !w.endsWith('ss')) return w.slice(0, -1);
   return w;
 }
+function stemLight(w) {
+  let s = stripPlural(w);
+  if (s.endsWith('ing') && s.length > 5) s = s.slice(0, -3);
+  if (s.endsWith('ed') && s.length > 4)  s = s.slice(0, -2);
+  if (s.endsWith('ly') && s.length > 4)  s = s.slice(0, -2);
+  if (s.endsWith('er') && s.length > 4)  s = s.slice(0, -2);
+  return s;
+}
 
+// ── 5. SEMANTIC MEANING GROUPS ───────────────────────────────
+// Each group = array of words that share the SAME meaning
+// Includes English + Tanglish variants as base seeds
+const meaningGroups = [
+  ['yes','ama','aama','om','yeah','yep','yup','ha','correct','right','sure'],
+  ['no','illa','illai','nah','nope','venda','vendam'],
+  ['ok','seri','sari','okey','okay','fine','alright'],
+  ['good','nalla','nalladhu','great','nice','awesome','super'],
+  ['bad','ketta','kettadhu','mosam','worst','terrible','horrible'],
+  ['come','vaa','vaanga','vaango'],
+  ['go','po','ponga','pongo','leave'],
+  ['eat','saapdu','saapidu','sapdu','thinna','saapadu'],
+  ['sleep','thoongu','thoonga','urangu','rest','nap'],
+  ['water','thanni','tanneer','thaneer'],
+  ['food','sapadu','saapadu','saappaadu','soru','sooru','meal','dinner','lunch','breakfast'],
+  ['friend','nanban','nanba','machaan','machan','machi','thala','bro','buddy','dude','mate'],
+  ['love','kaadhal','kadhal','anbu','luv','pyaar'],
+  ['happy','santhosam','santosam','kushee','kushi','joy','glad','cheerful'],
+  ['sad','varuththam','sogam','unhappy','upset','depressed'],
+  ['angry','kovam','koovam','seenam','mad','furious','irritated'],
+  ['beautiful','azhagu','azhaga','sundaram','beauty','pretty','gorgeous','handsome'],
+  ['money','panam','kaasu','cash','salary','income'],
+  ['home','veedu','veetu','illam','house','apartment','flat'],
+  ['mother','amma','ammaa','thaayi','mom','mummy','mum','mama'],
+  ['father','appa','appaa','thanthai','dad','daddy','papa'],
+  ['brother','anna','annaa','thambi','bro','sibling'],
+  ['sister','akka','akkaa','thangai','sis','sibling'],
+  ['school','palli','college','university'],
+  ['study','padippu','padipu','padi','learn','education'],
+  ['work','velai','velaai','pannunga','job','career','office'],
+  ['big','periya','perisu','large','huge','giant'],
+  ['small','chinna','sinna','chinnadhu','tiny','little','mini'],
+  ['fast','vegam','vegama','seekiram','quick','rapid','speedy'],
+  ['slow','methuvaa','methava','nidhanam','lazy'],
+  ['hot','soodu','sudu','warm','heat'],
+  ['cold','kulir','thanuppu','thanuppa','cool','chill','freezing'],
+  ['rain','mazhai','malai','mazhaikalam'],
+  ['sun','suriyan','suryan','veyyil','sunshine','sunny'],
+  ['night','iravu','ratri','evening','midnight'],
+  ['morning','kaalai','kalai','dawn','sunrise'],
+  ['dog','naai','nai','naayi','puppy','doggy'],
+  ['cat','poonai','punai','kitten','kitty'],
+  ['car','vandi','vehicle','auto','bike'],
+  ['movie','padam','cinema','film','picture'],
+  ['song','paatu','paattu','isai','music','tune'],
+  ['game','aatam','vilaiyaattu','match','play'],
+  ['win','jei','vetri','jeyippu','victory','champion'],
+  ['lose','tholu','tholvi','failure','defeat','lost'],
+  ['thanks','nandri','nanri','thankyou','ty'],
+  ['sorry','mannichu','mannikunga','mannichuko','apology'],
+  ['what','enna','yenna'],
+  ['why','yen'],
+  ['who','yaaru','yaru'],
+  ['where','enga','engae'],
+  ['when','eppoo','eppo'],
+  ['how','eppadi','yeppadi'],
+  ['this','idhu','idha'],
+  ['that','adhu','adha'],
+  ['today','innaiku','innikku','indru'],
+  ['tomorrow','naalaikku','naalai','nalaikku'],
+  ['yesterday','nethu','netrikku','netru'],
+  ['true','unmai','nijam','truth'],
+  ['false','poi','poy','lie','fake'],
+  ['wait','iru','irukku','podhu','hold'],
+  ['stop','nillu','nillungo','niruthu','halt'],
+  ['run','oodu','sprint','jog'],
+  ['walk','nadai','nada','stroll'],
+  ['talk','pesu','paesu','pesungo','speak','chat','converse'],
+  ['laugh','siri','sirippu','chiragu','lol','haha','giggle'],
+  ['cry','azhu','weep','tears','sob'],
+  ['fight','sandai','sanda','argue','quarrel'],
+  ['dance','aadu','naatyam','groove'],
+  ['tea','chai','theneer'],
+  ['coffee','kaapi','cappuccino','latte'],
+  ['rice','arisi','soru','sooru','saadham','biryani'],
+  ['chicken','kozhi','hen','poultry'],
+  ['fish','meen','meenu','seafood'],
+  ['pizza','pizza'],
+  ['burger','burger','hamburger'],
+  ['ice cream','icecream','kulfi'],
+];
+
+// Build fast reverse lookup: word → group index
+const wordToGroup = {};
+meaningGroups.forEach((group, gi) => {
+  group.forEach(w => { wordToGroup[w.toLowerCase()] = gi; });
+});
+
+// ── 6. SMART SEMANTIC LOOKUP ─────────────────────────────────
+// Checks if two words share the same meaning group (exact or fuzzy)
+function getSemanticGroup(word) {
+  // Direct lookup
+  if (wordToGroup[word] !== undefined) return wordToGroup[word];
+  // Phonetic-normalized lookup
+  const pn = phoneticsNormalize(word);
+  if (wordToGroup[pn] !== undefined) return wordToGroup[pn];
+  // Fuzzy lookup: find closest match in all group words
+  let bestGroup = -1, bestSim = 0;
+  for (const [w, gi] of Object.entries(wordToGroup)) {
+    const sim = similarityRatio(pn, phoneticsNormalize(w));
+    if (sim > bestSim && sim >= 0.80) {
+      bestSim = sim;
+      bestGroup = gi;
+    }
+  }
+  return bestGroup >= 0 ? bestGroup : -1;
+}
+
+function isSameSemanticGroup(wordA, wordB) {
+  const gA = getSemanticGroup(wordA);
+  const gB = getSemanticGroup(wordB);
+  return gA >= 0 && gB >= 0 && gA === gB;
+}
+
+// ── 7. MASTER smartMatch FUNCTION ────────────────────────────
 function smartMatch(guess, answer) {
   if (!guess || !answer) return { score: 0, type: 'none' };
-  const g = guess.toLowerCase().trim();
-  const a = answer.toLowerCase().trim();
 
-  // 1. Exact match (ignore case & spaces) → 2 points
+  // ─ Step 1: Normalize both inputs
+  const g = normalize(guess);
+  const a = normalize(answer);
+  if (!g || !a) return { score: 0, type: 'none' };
+
+  // ─ Step 2: Exact match → 2 pts
   if (g === a) return { score: 2, type: 'exact' };
 
-  // 2. Synonym/multi-language match → 2 points (Tanglish ↔ English)
-  if (areSynonyms(g, a)) return { score: 2, type: 'exact' };
+  // ─ Step 3: Phonetic-normalized exact match → 2 pts
+  const gPhon = phoneticsNormalize(g);
+  const aPhon = phoneticsNormalize(a);
+  if (gPhon === aPhon) return { score: 2, type: 'exact' };
 
-  // 2b. Multi-word synonym check: split into words and check if all words match via synonyms
+  // ─ Step 4: Semantic group match (cross-language) → 2 pts
+  if (isSameSemanticGroup(g, a)) return { score: 2, type: 'exact' };
+
+  // ─ Step 5: High fuzzy similarity (>= 80%) → 2 pts
+  const rawSim = similarityRatio(g, a);
+  if (rawSim >= 0.80) return { score: 2, type: 'exact' };
+
+  // ─ Step 5b: Phonetic fuzzy similarity (>= 80%) → 2 pts
+  const phonSim = similarityRatio(gPhon, aPhon);
+  if (phonSim >= 0.80) return { score: 2, type: 'exact' };
+
+  // ─ Step 6: Stemmed/plural match → 2 pts
+  if (stemLight(g) === stemLight(a)) return { score: 2, type: 'exact' };
+
+  // ─ Step 7: Multi-word semantic match → 2 pts
   const gWords = g.split(/\s+/).filter(Boolean);
   const aWords = a.split(/\s+/).filter(Boolean);
-  if (gWords.length === aWords.length && gWords.length > 0) {
-    const allWordsMatch = gWords.every((gw, i) => gw === aWords[i] || areSynonyms(gw, aWords[i]));
-    if (allWordsMatch) return { score: 2, type: 'exact' };
+  if (gWords.length > 0 && aWords.length > 0 && gWords.length === aWords.length) {
+    const allMatch = gWords.every((gw, i) =>
+      gw === aWords[i] ||
+      isSameSemanticGroup(gw, aWords[i]) ||
+      similarityRatio(phoneticsNormalize(gw), phoneticsNormalize(aWords[i])) >= 0.80
+    );
+    if (allMatch) return { score: 2, type: 'exact' };
   }
 
-  // 3. Partial match — one contains the other → 1 point
+  // ── PARTIAL MATCH CHECKS (1 point) ──
+
+  // ─ Step 8: Containment check → 1 pt
   if (g.includes(a) || a.includes(g)) return { score: 1, type: 'partial' };
 
-  // 4. Plural normalization check → 1 point
-  if (stripPlural(g) === stripPlural(a)) return { score: 1, type: 'partial' };
+  // ─ Step 9: Moderate fuzzy similarity (>= 55%) → 1 pt
+  if (rawSim >= 0.55 || phonSim >= 0.55) return { score: 1, type: 'partial' };
 
-  // 5. Small typo check (edit distance ≤ 2 for short words, ≤ 3 for longer) → 1 point
-  const maxDist = Math.max(a.length, g.length) <= 6 ? 1 : 2;
-  if (editDistance(g, a) <= maxDist) return { score: 1, type: 'partial' };
+  // ─ Step 10: Stemmed partial → 1 pt
+  if (similarityRatio(stemLight(g), stemLight(a)) >= 0.65) return { score: 1, type: 'partial' };
 
-  // 6. Word-level overlap check → 1 point
-  const common = gWords.filter(w => aWords.includes(w));
-  if (common.length > 0 && (common.length / Math.max(gWords.length, aWords.length)) >= 0.5) {
-    return { score: 1, type: 'partial' };
+  // ─ Step 11: Word-level overlap (>= 50% words match) → 1 pt
+  if (gWords.length > 0 && aWords.length > 0) {
+    const matchCount = gWords.filter(gw =>
+      aWords.some(aw =>
+        gw === aw ||
+        isSameSemanticGroup(gw, aw) ||
+        similarityRatio(gw, aw) >= 0.75
+      )
+    ).length;
+    const ratio = matchCount / Math.max(gWords.length, aWords.length);
+    if (ratio >= 0.5) return { score: 1, type: 'partial' };
   }
 
-  // 7. Word-level synonym overlap → 1 point
-  const synonymCommon = gWords.filter(gw => aWords.some(aw => areSynonyms(gw, aw)));
-  if (synonymCommon.length > 0 && (synonymCommon.length / Math.max(gWords.length, aWords.length)) >= 0.5) {
-    return { score: 1, type: 'partial' };
-  }
-
-  // 8. No match → 0 points
+  // ─ Step 12: No match → 0 pts
   return { score: 0, type: 'none' };
 }
 

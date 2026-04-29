@@ -450,9 +450,54 @@ body{background:linear-gradient(135deg,#0b0b2a 0%,#1a1040 40%,#0d2137 70%,#1a0a3
   .answer-compare-row{flex-direction:column;gap:10px}
   .compare-vs{min-width:auto;font-size:12px;padding:2px 0}
   .compare-card-value{font-size:17px}
+  .advantage-bar{flex-direction:column;gap:6px}
 }
 @media(max-width:360px){
   .toggle-btn{min-width:48px;padding:10px 4px;font-size:13px}
   .tab-btn{font-size:14px;padding:12px}
   .room-code-value{font-size:32px;letter-spacing:5px}
 }
+
+/* ═══ COIN SYSTEM ═══ */
+.coin-badge{display:flex;align-items:center;gap:5px;padding:5px 12px;border-radius:50px;background:linear-gradient(135deg,rgba(254,202,87,.15),rgba(255,165,0,.08));border:1px solid rgba(254,202,87,.35);font-size:13px;font-weight:700;color:var(--warning)}
+.coin-badge-game{padding:4px 10px;font-size:12px}
+.coin-icon{font-size:16px;line-height:1}
+.coin-count{min-width:18px;text-align:center}
+.coin-count.coin-pop{animation:coinPop .5s cubic-bezier(.22,1,.36,1)}
+@keyframes coinPop{0%{transform:scale(1)}40%{transform:scale(1.6);color:#fff;text-shadow:0 0 12px rgba(254,202,87,.8)}100%{transform:scale(1)}}
+
+/* Floating +coin indicator */
+.coin-float{position:fixed;z-index:600;font-size:18px;font-weight:900;color:var(--warning);pointer-events:none;animation:coinFloatUp 1.2s ease-out forwards;text-shadow:0 0 8px rgba(254,202,87,.5)}
+@keyframes coinFloatUp{0%{opacity:1;transform:translateY(0) scale(1)}60%{opacity:1;transform:translateY(-40px) scale(1.3)}100%{opacity:0;transform:translateY(-70px) scale(.8)}}
+
+/* ═══ COIN SHOP ═══ */
+.coin-shop-balance{display:flex;align-items:center;justify-content:center;gap:10px;padding:16px;margin-bottom:16px;border-radius:var(--radius);background:linear-gradient(135deg,rgba(254,202,87,.12),rgba(255,165,0,.06));border:1px solid rgba(254,202,87,.25)}
+.coin-icon-lg{font-size:32px}
+.coin-balance-value{font-size:36px;font-weight:900;color:var(--warning);text-shadow:0 0 10px rgba(254,202,87,.3)}
+.coin-balance-label{font-size:14px;color:var(--text2);font-weight:600}
+.shop-section-title{font-size:13px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:2px;margin-bottom:12px}
+.shop-items{display:flex;flex-direction:column;gap:10px;margin-bottom:16px}
+.shop-item{display:flex;align-items:center;gap:12px;padding:14px 16px;border-radius:var(--radius-sm);background:var(--surface);border:1px solid var(--glass-border);transition:.2s}
+.shop-item:hover{background:rgba(255,255,255,.08);border-color:rgba(254,202,87,.2)}
+.shop-item-icon{font-size:28px;flex-shrink:0}
+.shop-item-info{flex:1}
+.shop-item-name{font-weight:700;font-size:14px}
+.shop-item-desc{font-size:12px;color:var(--text3);margin-top:2px}
+.shop-item-cost{padding:4px 10px;border-radius:20px;font-size:12px;font-weight:700;background:rgba(254,202,87,.12);color:var(--warning);border:1px solid rgba(254,202,87,.2);white-space:nowrap}
+.shop-note{text-align:center;font-size:12px;color:var(--text3);margin-top:8px}
+
+/* ═══ ADVANTAGE BUTTONS (in-game) ═══ */
+.advantage-bar{display:flex;gap:8px;width:100%;max-width:420px;margin-top:4px;flex-wrap:wrap;justify-content:center}
+.advantage-btn{display:flex;align-items:center;gap:6px;padding:8px 14px;border:1.5px solid rgba(254,202,87,.25);border-radius:50px;background:linear-gradient(135deg,rgba(254,202,87,.08),rgba(255,165,0,.04));color:var(--warning);font-family:var(--font);font-size:12px;font-weight:700;cursor:pointer;transition:.25s;white-space:nowrap}
+.advantage-btn:hover:not(:disabled){background:linear-gradient(135deg,rgba(254,202,87,.2),rgba(255,165,0,.1));border-color:rgba(254,202,87,.5);transform:translateY(-1px);box-shadow:0 4px 15px rgba(254,202,87,.2)}
+.advantage-btn:active:not(:disabled){transform:scale(.95)}
+.advantage-btn:disabled{opacity:.35;cursor:not-allowed;filter:grayscale(.5)}
+.advantage-btn .adv-icon{font-size:16px}
+.advantage-btn .adv-cost{font-size:10px;opacity:.7}
+.advantage-btn.used{border-color:rgba(0,206,201,.4);background:rgba(0,206,201,.1);color:var(--success)}
+
+/* Revealed answer highlight */
+.revealed-answer-hint{margin-top:8px;padding:10px 16px;border-radius:var(--radius-sm);background:linear-gradient(135deg,rgba(0,206,201,.12),rgba(108,92,231,.08));border:1.5px solid rgba(0,206,201,.35);text-align:center;animation:hintRevealIn .5s cubic-bezier(.22,1,.36,1)}
+.revealed-answer-hint .hint-label{font-size:10px;text-transform:uppercase;letter-spacing:2px;color:var(--text2);font-weight:700}
+.revealed-answer-hint .hint-value{font-size:20px;font-weight:800;color:var(--success);margin-top:4px;word-break:break-word}
+@keyframes hintRevealIn{from{opacity:0;transform:scale(.7) translateY(10px)}60%{transform:scale(1.05) translateY(-2px)}to{opacity:1;transform:scale(1) translateY(0)}}

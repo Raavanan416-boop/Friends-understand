@@ -8,14 +8,56 @@ const QUESTION_TIMER_MS = 60000;
 const GUESS_TIMER_MS    = 25000;
 const QUESTION_WARN_SEC = 10; // Red warning at last 10s for question phase
 const GUESS_WARN_SEC    = 5;  // Pulse warning at last 5s for guess phase
+// Advantage costs
+const ADV_COST = { reveal: 25, hint: 15, extraTime: 10, doublePoints: 30 };
+
 let state = {
   playerName: localStorage.getItem('ms-name') || '',
   avatar: localStorage.getItem('ms-avatar') || '😀',
   roomCode: null, myId: null, timerInterval: null, pendingJoin: null,
   history: JSON.parse(localStorage.getItem('ms-history') || '[]'),
   lastRoomState: null,
-  hasLeftRoom: false
+  hasLeftRoom: false,
+  coins: parseInt(localStorage.getItem('ms-coins') || '0'),
+  usedReveal: false,
+  usedHint: false,
+  doubleNext: false
 };
+
+// ─── Coin Helpers ───
+function saveCoins() { localStorage.setItem('ms-coins', state.coins); }
+function addCoins(n) {
+  if (n <= 0) return;
+  state.coins += n;
+  saveCoins();
+  updateCoinUI();
+  // Pop animation on all coin count elements
+  $$('.coin-count').forEach(el => { el.classList.remove('coin-pop'); void el.offsetWidth; el.classList.add('coin-pop'); });
+  // Floating +N indicator near the game coin badge
+  const badge = $('#game-coin-badge') || $('#home-coin-badge');
+  if (badge) {
+    const rect = badge.getBoundingClientRect();
+    const fl = document.createElement('div');
+    fl.className = 'coin-float';
+    fl.textContent = `+${n} 💰`;
+    fl.style.left = rect.left + 'px';
+    fl.style.top = (rect.top - 5) + 'px';
+    document.body.appendChild(fl);
+    setTimeout(() => fl.remove(), 1300);
+  }
+}
+function spendCoins(n) {
+  if (state.coins < n) return false;
+  state.coins -= n;
+  saveCoins();
+  updateCoinUI();
+  return true;
+}
+function updateCoinUI() {
+  $$('.coin-count').forEach(el => el.textContent = state.coins);
+  const shopBal = $('#shop-coin-balance');
+  if (shopBal) shopBal.textContent = state.coins;
+}
 
 // ─── Sound ───
 function initSounds() {
@@ -71,6 +113,7 @@ function initUI() {
   $('#btn-refresh-rooms').onclick = fetchRooms;
   $('#btn-install-topbar').onclick = installApp;
   $('#btn-save-name').onclick = saveName;
+  $('#btn-coin-shop').onclick = () => { updateCoinUI(); openPanel('coinshop'); };
 
   // Panels
   $$('.panel-overlay').forEach(o => o.onclick = closeAllPanels);
@@ -133,6 +176,7 @@ function updateHomeUI() {
   $('#home-avatar').textContent = state.avatar;
   $('#home-player-name').textContent = state.playerName;
   $('#topbar-avatar').textContent = state.avatar;
+  updateCoinUI();
 }
 
 function switchTab(tab) {
@@ -307,6 +351,9 @@ function renderGameContent(data) {
     }
     startTimer(data.timerEnd, QUESTION_TIMER_MS, QUESTION_WARN_SEC);
   } else if (data.phase === 'guess') {
+    // Reset per-round advantage flags
+    state.usedReveal = false;
+    state.usedHint = false;
     if (isMyTurn) {
       gc.innerHTML = `<div class="game-question-display"><div class="q-label">Your Question</div><div class="q-text">${escHtml(data.question)}</div></div>
         <div class="waiting-turn-msg"><span class="wtm-emoji">⏳</span><p>Others are guessing…</p></div>`;
@@ -314,6 +361,8 @@ function renderGameContent(data) {
       // Build masked answer hint
       const ansLen = data.answerLength || 0;
       const maskedChars = ansLen > 0 ? '•'.repeat(Math.min(ansLen, 20)) : '• • • • •';
+      // Build hint letters string
+      const hintLetters = ansLen > 1 ? `${data.answer?.[0] || '?'} ${'_ '.repeat(Math.max(0, ansLen - 2))}${data.answer?.[ansLen-1] || '?'}` : '?';
       gc.innerHTML = `<div class="game-question-display"><div class="q-label">${escHtml(tp)}'s Question</div><div class="q-text">${escHtml(data.question)}</div></div>
         <div class="answer-card-wrapper">
           <div class="answer-card" id="answer-card">
@@ -331,10 +380,44 @@ function renderGameContent(data) {
             </div>
           </div>
         </div>
+        <div id="advantage-hint-area"></div>
+        <div class="advantage-bar" id="advantage-bar">
+          <button class="advantage-btn" id="btn-adv-reveal" ${state.coins < ADV_COST.reveal ? 'disabled' : ''}>
+            <span class="adv-icon">👀</span> Reveal <span class="adv-cost">(${ADV_COST.reveal}💰)</span>
+          </button>
+          <button class="advantage-btn" id="btn-adv-hint" ${state.coins < ADV_COST.hint ? 'disabled' : ''}>
+            <span class="adv-icon">🔤</span> Hint <span class="adv-cost">(${ADV_COST.hint}💰)</span>
+          </button>
+        </div>
         <div class="game-input-area">
           <input type="text" id="input-guess" class="input-field" placeholder="Your guess…" maxlength="60" autocomplete="off">
           <button class="btn-primary btn-neon" id="btn-submit-guess">Submit Guess</button>
         </div>`;
+      // Wire advantage buttons
+      $('#btn-adv-reveal').onclick = () => {
+        if (state.usedReveal) return;
+        if (!spendCoins(ADV_COST.reveal)) return showToast('Not enough coins!');
+        state.usedReveal = true;
+        $('#btn-adv-reveal').disabled = true;
+        $('#btn-adv-reveal').classList.add('used');
+        $('#btn-adv-reveal').innerHTML = '<span class="adv-icon">✅</span> Revealed';
+        socket.emit('use-reveal', { roomCode: state.roomCode });
+        sfx('click');
+      };
+      $('#btn-adv-hint').onclick = () => {
+        if (state.usedHint) return;
+        if (!spendCoins(ADV_COST.hint)) return showToast('Not enough coins!');
+        state.usedHint = true;
+        $('#btn-adv-hint').disabled = true;
+        $('#btn-adv-hint').classList.add('used');
+        $('#btn-adv-hint').innerHTML = '<span class="adv-icon">✅</span> Hinted';
+        // Show first & last letter from answerLength
+        const area = $('#advantage-hint-area');
+        const first = maskedChars[0] || '?';
+        const last = maskedChars[Math.min(ansLen, 20) - 1] || '?';
+        area.innerHTML = `<div class="revealed-answer-hint"><div class="hint-label">Hint Letters</div><div class="hint-value">${ansLen > 0 ? '_ '.repeat(ansLen).trim() : '?'}<br><small style="color:var(--text2);font-size:12px">${ansLen} letters</small></div></div>`;
+        sfx('click');
+      };
       $('#btn-submit-guess').onclick = () => {
         const g = $('#input-guess').value.trim();
         if (!g) return showToast('Type your guess');
@@ -350,6 +433,23 @@ function renderGameContent(data) {
 
 // ─── Socket Events ───
 socket.on('connect', () => { state.myId = socket.id; });
+
+// ─── Reveal Answer (advantage response) ───
+socket.on('reveal-answer', ({ answer }) => {
+  // Show the real answer in the hint area
+  const area = $('#advantage-hint-area');
+  if (area) {
+    area.innerHTML = `<div class="revealed-answer-hint"><div class="hint-label">🔓 Answer Revealed</div><div class="hint-value">${escHtml(answer)}</div></div>`;
+  }
+  // Also update the answer card back to show real answer
+  const cardVal = $('#answer-card-value');
+  if (cardVal) cardVal.textContent = answer;
+  // Flip the answer card
+  const card = document.getElementById('answer-card');
+  if (card) card.classList.add('flipped');
+  sfx('correct');
+  showToast('Answer revealed! 👀', 2000);
+});
 
 // ─── Timer Sync (server-driven lockstep) ───
 socket.on('timer-sync', ({ timerEnd, phase, serverTime }) => {
@@ -543,6 +643,13 @@ socket.on('guess-results', ({ results, correctAnswer, question, scores, anyCorre
     if (my?.matchType === 'exact') sfx('correct');
     else if (my?.matchType === 'partial') sfx('click');
     else if (my) sfx('wrong');
+
+    // ─── COIN EARNING: 1 point = 1 coin ───
+    if (my && my.matchScore > 0) {
+      const earned = state.doubleNext ? my.matchScore * 2 : my.matchScore;
+      state.doubleNext = false;
+      addCoins(earned);
+    }
 
     // Update leaderboard data
     if (anyCorrect) updateLB(scores, results);
