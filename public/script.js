@@ -6,10 +6,58 @@ const SOUNDS = {};
 // Timer constants (must match server)
 const QUESTION_TIMER_MS = 60000;
 const GUESS_TIMER_MS    = 25000;
-const QUESTION_WARN_SEC = 10; // Red warning at last 10s for question phase
-const GUESS_WARN_SEC    = 5;  // Pulse warning at last 5s for guess phase
+const QUESTION_WARN_SEC = 10;
+const GUESS_WARN_SEC    = 5;
 // Advantage costs
-const ADV_COST = { reveal: 25, hint: 15, extraTime: 10, doublePoints: 30 };
+const ADV_COST = { reveal: 25, hint: 15, extraTime: 10, doublePoints: 30, letterHint: 15 };
+
+// ─── Profile Data ───
+function loadProfile() {
+  return JSON.parse(localStorage.getItem('ms-profile') || '{"matches":0,"wins":0,"opponents":{}}');
+}
+function saveProfile(p) { localStorage.setItem('ms-profile', JSON.stringify(p)); }
+
+// ─── Task Data ───
+function loadTasks() {
+  const t = JSON.parse(localStorage.getItem('ms-tasks') || '{}');
+  const today = new Date().toDateString();
+  if (t.date !== today) return { date: today, winStreak: 0, perfectCount: 0, noAdvWin: false, claimed: [false,false,false] };
+  return t;
+}
+function saveTasks(t) { localStorage.setItem('ms-tasks', JSON.stringify(t)); }
+
+// ─── Secret Page ───
+let secretTapCount = 0, secretTapTimer = null;
+function canOpenSecret() {
+  const last = localStorage.getItem('ms-secret-date');
+  return last !== new Date().toDateString();
+}
+
+// ─── Daily Reward ───
+function canClaimDaily() {
+  const last = localStorage.getItem('ms-daily-date');
+  return last !== new Date().toDateString();
+}
+
+// ─── Global Leaderboard (localStorage-based) ───
+function loadGlobalLB() { return JSON.parse(localStorage.getItem('ms-global-lb') || '[]'); }
+function saveGlobalLB(lb) { localStorage.setItem('ms-global-lb', JSON.stringify(lb)); }
+function getWeekStart() {
+  const d = new Date(); d.setHours(0,0,0,0);
+  d.setDate(d.getDate() - d.getDay());
+  return d.getTime();
+}
+function checkWeeklyReset() {
+  const lastReset = parseInt(localStorage.getItem('ms-lb-reset') || '0');
+  const weekStart = getWeekStart();
+  if (lastReset < weekStart) { saveGlobalLB([]); localStorage.setItem('ms-lb-reset', weekStart.toString()); }
+}
+function getRankInfo(coins, wins) {
+  if (coins >= 500 || wins >= 20) return { label: '🔥 Legend', cls: 'rank-legend' };
+  if (coins >= 200 || wins >= 10) return { label: '🟡 Gold', cls: 'rank-gold' };
+  if (coins >= 80 || wins >= 5) return { label: '⚪ Silver', cls: 'rank-silver' };
+  return { label: '🟤 Bronze', cls: 'rank-bronze' };
+}
 
 let state = {
   playerName: localStorage.getItem('ms-name') || '',
@@ -21,6 +69,8 @@ let state = {
   coins: parseInt(localStorage.getItem('ms-coins') || '0'),
   usedReveal: false,
   usedHint: false,
+  usedLetterHint: false,
+  usedAnyAdvantage: false,
   doubleNext: false
 };
 
@@ -97,7 +147,12 @@ document.addEventListener('click', e => {
 
 // ─── Init ───
 function initUI() {
-  if (state.playerName) { showScreen('home'); updateHomeUI(); fetchRooms(); } else { showScreen('login'); }
+  checkWeeklyReset();
+  if (state.playerName) {
+    showScreen('home'); updateHomeUI(); fetchRooms();
+    // Daily reward check
+    if (canClaimDaily()) setTimeout(() => openPopup('daily-reward'), 800);
+  } else { showScreen('login'); }
   $('#btn-login').onclick = doLogin;
   $('#input-login-name').onkeydown = e => { if (e.key === 'Enter') doLogin(); };
 
@@ -114,6 +169,47 @@ function initUI() {
   $('#btn-install-topbar').onclick = installApp;
   $('#btn-save-name').onclick = saveName;
   $('#btn-coin-shop').onclick = () => { updateCoinUI(); openPanel('coinshop'); };
+  $('#btn-profile').onclick = () => { renderProfile(); openPanel('profile'); };
+  $('#btn-global-leaderboard').onclick = () => { renderGlobalLB(); openPanel('global-lb'); };
+
+  // Secret coin tap
+  const coinTap = $('#secret-coin-tap');
+  if (coinTap) {
+    coinTap.addEventListener('click', (e) => {
+      e.stopPropagation();
+      coinTap.classList.remove('tap-flash'); void coinTap.offsetWidth; coinTap.classList.add('tap-flash');
+      secretTapCount++;
+      clearTimeout(secretTapTimer);
+      secretTapTimer = setTimeout(() => { secretTapCount = 0; }, 600);
+      if (secretTapCount >= 3) {
+        secretTapCount = 0;
+        if (canOpenSecret()) {
+          localStorage.setItem('ms-secret-date', new Date().toDateString());
+          addCoins(10);
+          showToast('🎉 Secret Vault opened! +10 bonus coins!', 3000);
+          spawnCoinRain();
+          renderSecretTasks();
+          openPanel('secret');
+        } else {
+          showToast('🔒 Secret Vault already opened today!', 2000);
+        }
+      }
+    });
+  }
+
+  // Daily reward
+  $('#btn-claim-daily').onclick = () => {
+    localStorage.setItem('ms-daily-date', new Date().toDateString());
+    addCoins(3);
+    closePopup('daily-reward');
+    showToast('🎁 +3 daily coins claimed!', 2500);
+    spawnCoinRain();
+  };
+
+  // Secret task claims
+  $('#btn-claim-task1').onclick = () => claimTask(0, 25);
+  $('#btn-claim-task2').onclick = () => claimTask(1, 50);
+  $('#btn-claim-task3').onclick = () => claimTask(2, 100);
 
   // Panels
   $$('.panel-overlay').forEach(o => o.onclick = closeAllPanels);
@@ -354,6 +450,7 @@ function renderGameContent(data) {
     // Reset per-round advantage flags
     state.usedReveal = false;
     state.usedHint = false;
+    state.usedLetterHint = false;
     if (isMyTurn) {
       gc.innerHTML = `<div class="game-question-display"><div class="q-label">Your Question</div><div class="q-text">${escHtml(data.question)}</div></div>
         <div class="waiting-turn-msg"><span class="wtm-emoji">⏳</span><p>Others are guessing…</p></div>`;
@@ -361,8 +458,6 @@ function renderGameContent(data) {
       // Build masked answer hint
       const ansLen = data.answerLength || 0;
       const maskedChars = ansLen > 0 ? '•'.repeat(Math.min(ansLen, 20)) : '• • • • •';
-      // Build hint letters string
-      const hintLetters = ansLen > 1 ? `${data.answer?.[0] || '?'} ${'_ '.repeat(Math.max(0, ansLen - 2))}${data.answer?.[ansLen-1] || '?'}` : '?';
       gc.innerHTML = `<div class="game-question-display"><div class="q-label">${escHtml(tp)}'s Question</div><div class="q-text">${escHtml(data.question)}</div></div>
         <div class="answer-card-wrapper">
           <div class="answer-card" id="answer-card">
@@ -388,6 +483,9 @@ function renderGameContent(data) {
           <button class="advantage-btn" id="btn-adv-hint" ${state.coins < ADV_COST.hint ? 'disabled' : ''}>
             <span class="adv-icon">🔤</span> Hint <span class="adv-cost">(${ADV_COST.hint}💰)</span>
           </button>
+          <button class="advantage-btn" id="btn-adv-letter" ${state.coins < ADV_COST.letterHint ? 'disabled' : ''}>
+            <span class="adv-icon">🔍</span> 2 Letters <span class="adv-cost">(${ADV_COST.letterHint}💰)</span>
+          </button>
         </div>
         <div class="game-input-area">
           <input type="text" id="input-guess" class="input-field" placeholder="Your guess…" maxlength="60" autocomplete="off">
@@ -397,7 +495,7 @@ function renderGameContent(data) {
       $('#btn-adv-reveal').onclick = () => {
         if (state.usedReveal) return;
         if (!spendCoins(ADV_COST.reveal)) return showToast('Not enough coins!');
-        state.usedReveal = true;
+        state.usedReveal = true; state.usedAnyAdvantage = true;
         $('#btn-adv-reveal').disabled = true;
         $('#btn-adv-reveal').classList.add('used');
         $('#btn-adv-reveal').innerHTML = '<span class="adv-icon">✅</span> Revealed';
@@ -407,15 +505,23 @@ function renderGameContent(data) {
       $('#btn-adv-hint').onclick = () => {
         if (state.usedHint) return;
         if (!spendCoins(ADV_COST.hint)) return showToast('Not enough coins!');
-        state.usedHint = true;
+        state.usedHint = true; state.usedAnyAdvantage = true;
         $('#btn-adv-hint').disabled = true;
         $('#btn-adv-hint').classList.add('used');
         $('#btn-adv-hint').innerHTML = '<span class="adv-icon">✅</span> Hinted';
-        // Show first & last letter from answerLength
         const area = $('#advantage-hint-area');
-        const first = maskedChars[0] || '?';
-        const last = maskedChars[Math.min(ansLen, 20) - 1] || '?';
-        area.innerHTML = `<div class="revealed-answer-hint"><div class="hint-label">Hint Letters</div><div class="hint-value">${ansLen > 0 ? '_ '.repeat(ansLen).trim() : '?'}<br><small style="color:var(--text2);font-size:12px">${ansLen} letters</small></div></div>`;
+        area.innerHTML = `<div class="revealed-answer-hint"><div class="hint-label">Hint</div><div class="hint-value">${ansLen} letters<br><small style="color:var(--text2);font-size:12px">First & last letter hint</small></div></div>`;
+        sfx('click');
+      };
+      // NEW: Letter Hint — reveal first 2 letters
+      $('#btn-adv-letter').onclick = () => {
+        if (state.usedLetterHint) return;
+        if (!spendCoins(ADV_COST.letterHint)) return showToast('Not enough coins!');
+        state.usedLetterHint = true; state.usedAnyAdvantage = true;
+        $('#btn-adv-letter').disabled = true;
+        $('#btn-adv-letter').classList.add('used');
+        $('#btn-adv-letter').innerHTML = '<span class="adv-icon">✅</span> Shown';
+        socket.emit('use-letter-hint', { roomCode: state.roomCode });
         sfx('click');
       };
       $('#btn-submit-guess').onclick = () => {
@@ -644,11 +750,19 @@ socket.on('guess-results', ({ results, correctAnswer, question, scores, anyCorre
     else if (my?.matchType === 'partial') sfx('click');
     else if (my) sfx('wrong');
 
-    // ─── COIN EARNING: 1 point = 1 coin ───
+    // ─── COIN EARNING: 1 point = 1 coin + BONUS for perfect ───
     if (my && my.matchScore > 0) {
-      const earned = state.doubleNext ? my.matchScore * 2 : my.matchScore;
+      let earned = state.doubleNext ? my.matchScore * 2 : my.matchScore;
+      // BONUS: +1 extra coin for perfect match
+      if (my.matchType === 'exact') earned += 1;
       state.doubleNext = false;
       addCoins(earned);
+      // Track perfect matches for secret tasks
+      if (my.matchType === 'exact') {
+        const tasks = loadTasks();
+        tasks.perfectCount = (tasks.perfectCount || 0) + 1;
+        saveTasks(tasks);
+      }
     }
 
     // Update leaderboard data
@@ -678,6 +792,34 @@ socket.on('game-over', ({ winner, scores }) => {
   const hi = { date: new Date().toLocaleString(), result: winner.id === state.myId ? '🏆 Won!' : `${winner.name} won`, score: scores.find(s => s.id === state.myId)?.score || 0, players: scores.length };
   state.history.unshift(hi); if (state.history.length > 30) state.history.pop();
   localStorage.setItem('ms-history', JSON.stringify(state.history));
+
+  // ─── PROFILE STATS UPDATE ───
+  const prof = loadProfile();
+  prof.matches = (prof.matches || 0) + 1;
+  const iWon = winner.id === state.myId;
+  if (iWon) prof.wins = (prof.wins || 0) + 1;
+  // Track opponents for Best Friend
+  scores.forEach(s => {
+    if (s.id !== state.myId) {
+      if (!prof.opponents) prof.opponents = {};
+      prof.opponents[s.name] = (prof.opponents[s.name] || 0) + 1;
+    }
+  });
+  saveProfile(prof);
+
+  // ─── TASK TRACKING ───
+  const tasks = loadTasks();
+  if (iWon) {
+    tasks.winStreak = (tasks.winStreak || 0) + 1;
+    if (!state.usedAnyAdvantage) tasks.noAdvWin = true;
+  } else {
+    tasks.winStreak = 0;
+  }
+  saveTasks(tasks);
+  state.usedAnyAdvantage = false;
+
+  // ─── GLOBAL LEADERBOARD UPDATE ───
+  updateGlobalLeaderboard();
 });
 
 // ── Emoji with name ──
@@ -782,6 +924,146 @@ function updateLB(scores, results) {
 }
 function updatePL(players) {
   $('#players-popup-list').innerHTML = (Array.isArray(players)?players:[]).map(p => `<div class="lb-row"><span class="lb-avatar">${p.avatar}</span><div class="lb-info"><div class="lb-name">${escHtml(p.name)}</div></div><span class="lb-score">${p.score}</span></div>`).join('');
+}
+
+// ─── Letter Hint Response ───
+socket.on('letter-hint', ({ hint }) => {
+  const area = $('#advantage-hint-area');
+  if (area) {
+    area.innerHTML = `<div class="letter-hint-display"><div class="lh-label">🔍 First 2 Letters</div><div class="lh-value">${escHtml(hint)}</div></div>`;
+  }
+  sfx('click');
+  showToast('Letter hint revealed! 🔍', 2000);
+});
+
+// ─── Profile Rendering ───
+function renderProfile() {
+  const prof = loadProfile();
+  const rank = getRankInfo(state.coins, prof.wins || 0);
+  $('#profile-avatar').textContent = state.avatar;
+  $('#profile-name').textContent = state.playerName;
+  $('#profile-rank-badge').textContent = rank.label;
+  $('#profile-rank-badge').className = 'profile-rank-badge';
+  $('#profile-coins').textContent = state.coins;
+  $('#profile-matches').textContent = prof.matches || 0;
+  $('#profile-wins').textContent = prof.wins || 0;
+  const wr = prof.matches > 0 ? Math.round((prof.wins||0)/(prof.matches)*100) : 0;
+  $('#profile-winrate').textContent = wr + '%';
+  // Best Friend detection
+  const bfEl = $('#profile-best-friend');
+  if (prof.opponents && Object.keys(prof.opponents).length > 0) {
+    const sorted = Object.entries(prof.opponents).sort((a,b) => b[1]-a[1]);
+    $('#bf-name').textContent = sorted[0][0];
+    bfEl.style.display = 'flex';
+  } else {
+    bfEl.style.display = 'none';
+  }
+}
+
+// ─── Global Leaderboard ───
+function updateGlobalLeaderboard() {
+  checkWeeklyReset();
+  const lb = loadGlobalLB();
+  const prof = loadProfile();
+  const me = lb.find(e => e.name === state.playerName);
+  if (me) {
+    me.coins = state.coins; me.wins = prof.wins||0; me.avatar = state.avatar;
+  } else {
+    lb.push({ name: state.playerName, coins: state.coins, wins: prof.wins||0, avatar: state.avatar });
+  }
+  saveGlobalLB(lb);
+}
+
+function renderGlobalLB() {
+  checkWeeklyReset();
+  updateGlobalLeaderboard();
+  const lb = loadGlobalLB().sort((a,b) => b.coins - a.coins);
+  const list = $('#global-lb-list');
+  // Reset timer display
+  const weekStart = getWeekStart();
+  const nextReset = weekStart + 7*24*60*60*1000;
+  const daysLeft = Math.max(0, Math.ceil((nextReset - Date.now())/(24*60*60*1000)));
+  $('#global-lb-reset').textContent = `Resets in ${daysLeft} day${daysLeft!==1?'s':''}`;
+  if (lb.length === 0) {
+    list.innerHTML = '<p class="empty-state">No players yet. Play to join!</p>';
+    return;
+  }
+  list.innerHTML = lb.slice(0,20).map((p,i) => {
+    const rank = getRankInfo(p.coins, p.wins);
+    const isMe = p.name === state.playerName;
+    const top3 = i < 3;
+    return `<div class="glb-row${isMe?' glb-me':''}${top3?' glb-top3':''}">
+      <span class="glb-rank" style="color:${i===0?'#ffd700':i===1?'#c0c0c0':i===2?'#cd7f32':'var(--text3)'}">#${i+1}</span>
+      <span class="glb-avatar">${p.avatar||'😀'}</span>
+      <div class="glb-info"><div class="glb-name">${escHtml(p.name)}${isMe?' (You)':''}</div>
+      <div class="glb-rank-label" style="color:${rank.cls==='rank-legend'?'#ff6b6b':rank.cls==='rank-gold'?'#ffd700':rank.cls==='rank-silver'?'#c0c0c0':'#cd7f32'}">${rank.label}</div></div>
+      <span class="glb-coins">${p.coins} 💰</span>
+      <span class="glb-wins">${p.wins}W</span>
+    </div>`;
+  }).join('');
+}
+
+// ─── Secret Tasks ───
+function renderSecretTasks() {
+  const tasks = loadTasks();
+  // Task 1: Win 2 in a row
+  const t1prog = Math.min(tasks.winStreak||0, 2);
+  $('#task1-progress').style.width = (t1prog/2*100)+'%';
+  $('#task1-progress-text').textContent = `${t1prog} / 2 wins`;
+  updateTaskStatus(1, t1prog >= 2, tasks.claimed[0]);
+  // Task 2: 3 perfect matches
+  const t2prog = Math.min(tasks.perfectCount||0, 3);
+  $('#task2-progress').style.width = (t2prog/3*100)+'%';
+  $('#task2-progress-text').textContent = `${t2prog} / 3 perfect matches`;
+  updateTaskStatus(2, t2prog >= 3, tasks.claimed[1]);
+  // Task 3: Win without advantage
+  const t3done = tasks.noAdvWin || false;
+  $('#task3-progress').style.width = t3done ? '100%' : '0%';
+  $('#task3-progress-text').textContent = t3done ? 'Completed!' : 'Not completed';
+  updateTaskStatus(3, t3done, tasks.claimed[2]);
+}
+
+function updateTaskStatus(num, completed, claimed) {
+  const statusEl = $(`#task${num}-status`);
+  const claimBtn = $(`#btn-claim-task${num}`);
+  if (claimed) {
+    statusEl.textContent = 'Claimed'; statusEl.className = 'stc-status claimed';
+    claimBtn.style.display = 'none';
+  } else if (completed) {
+    statusEl.textContent = 'Complete!'; statusEl.className = 'stc-status completed';
+    claimBtn.style.display = 'block';
+  } else {
+    statusEl.textContent = 'In Progress'; statusEl.className = 'stc-status active';
+    claimBtn.style.display = 'none';
+  }
+}
+
+function claimTask(idx, reward) {
+  const tasks = loadTasks();
+  if (tasks.claimed[idx]) return showToast('Already claimed!');
+  tasks.claimed[idx] = true;
+  saveTasks(tasks);
+  addCoins(reward);
+  spawnCoinRain();
+  showToast(`🎉 Task reward: +${reward} coins!`, 3000);
+  renderSecretTasks();
+}
+
+// ─── Coin Rain Animation ───
+function spawnCoinRain() {
+  const container = $('#coin-rain-container');
+  if (!container) return;
+  for (let i = 0; i < 15; i++) {
+    setTimeout(() => {
+      const coin = document.createElement('div');
+      coin.className = 'coin-rain';
+      coin.textContent = '💰';
+      coin.style.left = (Math.random() * 90 + 5) + '%';
+      coin.style.animationDuration = (1 + Math.random()) + 's';
+      container.appendChild(coin);
+      setTimeout(() => coin.remove(), 2000);
+    }, i * 100);
+  }
 }
 
 // ─── PWA ───

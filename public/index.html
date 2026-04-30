@@ -20,6 +20,21 @@
   <!-- Floating Emoji Container -->
   <div id="emoji-float-container"></div>
 
+  <!-- ═══════ DAILY REWARD POPUP ═══════ -->
+  <div class="popup-overlay" id="popup-daily-reward">
+    <div class="popup-card glass-card popup-daily-card">
+      <div class="daily-reward-icon">🎁</div>
+      <h3>Daily Reward!</h3>
+      <p>Welcome back! Here's your daily bonus</p>
+      <div class="daily-reward-amount">
+        <span class="daily-coin-anim">💰</span>
+        <span class="daily-reward-value">+3</span>
+        <span class="daily-reward-label">coins</span>
+      </div>
+      <button class="btn-primary btn-neon" id="btn-claim-daily">Claim Reward</button>
+    </div>
+  </div>
+
   <!-- ═══════ LOGIN SCREEN ═══════ -->
   <section id="screen-login" class="screen active">
     <div class="login-bg">
@@ -53,11 +68,17 @@
       </div>
       <div class="top-bar-right">
         <div class="coin-badge" id="home-coin-badge" title="Your Coins">
-          <span class="coin-icon">💰</span>
+          <span class="coin-icon secret-coin-trigger" id="secret-coin-tap">💰</span>
           <span class="coin-count" id="home-coin-count">0</span>
         </div>
         <button class="icon-btn" id="btn-coin-shop" title="Coin Shop">
           🛒
+        </button>
+        <button class="icon-btn" id="btn-profile" title="Profile">
+          👤
+        </button>
+        <button class="icon-btn" id="btn-global-leaderboard" title="Global Leaderboard">
+          🏆
         </button>
         <button class="icon-btn" id="btn-history" title="History">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="9"/><path d="M1 4v4h4"/><path d="M3.51 15a9 9 0 1 0 .49-7.5L1 8"/></svg>
@@ -199,6 +220,14 @@
           <div class="shop-item-cost">15 💰</div>
         </div>
         <div class="shop-item">
+          <div class="shop-item-icon">🔍</div>
+          <div class="shop-item-info">
+            <div class="shop-item-name">Letter Hint (NEW!)</div>
+            <div class="shop-item-desc">Show first 2 letters of answer</div>
+          </div>
+          <div class="shop-item-cost">15 💰</div>
+        </div>
+        <div class="shop-item">
           <div class="shop-item-icon">⏳</div>
           <div class="shop-item-info">
             <div class="shop-item-name">Extra Time</div>
@@ -216,6 +245,133 @@
         </div>
       </div>
       <p class="shop-note">Use advantages during the guessing phase!</p>
+    </div>
+  </div>
+
+  <!-- ═══════ PROFILE PANEL ═══════ -->
+  <div class="slide-panel" id="panel-profile">
+    <div class="panel-overlay"></div>
+    <div class="panel-content glass-card">
+      <div class="panel-handle"></div>
+      <h2 class="panel-title">👤 My Profile</h2>
+      <div class="profile-hero">
+        <div class="profile-avatar-large" id="profile-avatar">😀</div>
+        <div class="profile-name" id="profile-name">Player</div>
+        <div class="profile-rank-badge" id="profile-rank-badge">🟤 Bronze</div>
+      </div>
+      <div class="profile-stats-grid">
+        <div class="profile-stat-card">
+          <div class="stat-icon">💰</div>
+          <div class="stat-value" id="profile-coins">0</div>
+          <div class="stat-label">Total Coins</div>
+        </div>
+        <div class="profile-stat-card">
+          <div class="stat-icon">🎮</div>
+          <div class="stat-value" id="profile-matches">0</div>
+          <div class="stat-label">Matches Played</div>
+        </div>
+        <div class="profile-stat-card">
+          <div class="stat-icon">🏆</div>
+          <div class="stat-value" id="profile-wins">0</div>
+          <div class="stat-label">Wins</div>
+        </div>
+        <div class="profile-stat-card">
+          <div class="stat-icon">📊</div>
+          <div class="stat-value" id="profile-winrate">0%</div>
+          <div class="stat-label">Win Rate</div>
+        </div>
+      </div>
+      <div class="profile-best-friend glass-card" id="profile-best-friend" style="display:none">
+        <div class="bf-icon">🧑‍🤝‍🧑</div>
+        <div class="bf-info">
+          <div class="bf-label">Best Friend</div>
+          <div class="bf-name" id="bf-name">—</div>
+        </div>
+        <div class="bf-emoji">😏</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════ GLOBAL LEADERBOARD PANEL ═══════ -->
+  <div class="slide-panel" id="panel-global-lb">
+    <div class="panel-overlay"></div>
+    <div class="panel-content glass-card">
+      <div class="panel-handle"></div>
+      <h2 class="panel-title">🏆 Global Leaderboard</h2>
+      <div class="global-lb-header">
+        <div class="global-lb-period" id="global-lb-period">This Week</div>
+        <div class="global-lb-reset" id="global-lb-reset">Resets in —</div>
+      </div>
+      <div class="global-lb-ranks">
+        <span class="rank-chip rank-legend">🔥 Legend</span>
+        <span class="rank-chip rank-gold">🟡 Gold</span>
+        <span class="rank-chip rank-silver">⚪ Silver</span>
+        <span class="rank-chip rank-bronze">🟤 Bronze</span>
+      </div>
+      <div class="global-lb-list" id="global-lb-list">
+        <p class="empty-state">Loading leaderboard…</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════ SECRET PAGE ═══════ -->
+  <div class="slide-panel" id="panel-secret">
+    <div class="panel-overlay"></div>
+    <div class="panel-content glass-card secret-panel-content">
+      <div class="panel-handle"></div>
+      <div class="secret-header">
+        <div class="secret-sparkle">✨</div>
+        <h2 class="secret-title">Secret Vault</h2>
+        <p class="secret-subtitle">Complete challenges for massive rewards!</p>
+      </div>
+      <div class="secret-bonus-banner" id="secret-bonus-banner">
+        <div class="sbb-icon">🎉</div>
+        <div class="sbb-text">Welcome Bonus: <strong>+10 coins</strong> claimed!</div>
+      </div>
+      <div class="secret-tasks" id="secret-tasks">
+        <!-- Task 1 -->
+        <div class="secret-task-card" data-task="1">
+          <div class="stc-header">
+            <div class="stc-reward-badge">🏅 25 💰</div>
+            <div class="stc-status" id="task1-status">Not Started</div>
+          </div>
+          <div class="stc-title">🔥 Win Streak</div>
+          <div class="stc-desc">Win 2 matches in a row</div>
+          <div class="stc-progress-bar">
+            <div class="stc-progress-fill" id="task1-progress" style="width:0%"></div>
+          </div>
+          <div class="stc-progress-text" id="task1-progress-text">0 / 2 wins</div>
+          <button class="btn-primary btn-neon stc-claim-btn" id="btn-claim-task1" style="display:none">Claim 25 💰</button>
+        </div>
+        <!-- Task 2 -->
+        <div class="secret-task-card" data-task="2">
+          <div class="stc-header">
+            <div class="stc-reward-badge">🏅 50 💰</div>
+            <div class="stc-status" id="task2-status">Not Started</div>
+          </div>
+          <div class="stc-title">🎯 Perfect Mastery</div>
+          <div class="stc-desc">Get 3 perfect matches in a day</div>
+          <div class="stc-progress-bar">
+            <div class="stc-progress-fill" id="task2-progress" style="width:0%"></div>
+          </div>
+          <div class="stc-progress-text" id="task2-progress-text">0 / 3 perfect matches</div>
+          <button class="btn-primary btn-neon stc-claim-btn" id="btn-claim-task2" style="display:none">Claim 50 💰</button>
+        </div>
+        <!-- Task 3 -->
+        <div class="secret-task-card" data-task="3">
+          <div class="stc-header">
+            <div class="stc-reward-badge">🏅 100 💰</div>
+            <div class="stc-status" id="task3-status">Not Started</div>
+          </div>
+          <div class="stc-title">💎 No-Advantage Champion</div>
+          <div class="stc-desc">Win a match without using any advantage</div>
+          <div class="stc-progress-bar">
+            <div class="stc-progress-fill" id="task3-progress" style="width:0%"></div>
+          </div>
+          <div class="stc-progress-text" id="task3-progress-text">Not completed</div>
+          <button class="btn-primary btn-neon stc-claim-btn" id="btn-claim-task3" style="display:none">Claim 100 💰</button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -341,6 +497,9 @@
 
   <!-- Toast -->
   <div class="toast" id="toast"></div>
+
+  <!-- Coin Rain Container -->
+  <div id="coin-rain-container"></div>
 
   <script src="/socket.io/socket.io.js"></script>
   <script src="script.js"></script>

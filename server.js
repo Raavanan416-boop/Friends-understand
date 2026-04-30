@@ -231,6 +231,23 @@ io.on('connection', (socket) => {
     socket.emit('reveal-answer', { answer: room.currentAnswer });
   });
 
+  // ── Use Advantage: Letter Hint (show first 2 letters) ──
+  socket.on('use-letter-hint', ({ roomCode }) => {
+    const room = rooms[roomCode];
+    if (!room || room.phase !== 'guess') return;
+    const activePlayers = getActivePlayers(room);
+    const turnPlayerId = activePlayers[room.currentTurnPlayerIndex]?.id;
+    if (socket.id === turnPlayerId) return;
+    if (!room.letterHintUsed) room.letterHintUsed = {};
+    if (room.letterHintUsed[socket.id]) return;
+    room.letterHintUsed[socket.id] = true;
+    // Build hint: first 2 letters + asterisks
+    const answer = room.currentAnswer || '';
+    const first2 = answer.substring(0, 2);
+    const masked = first2 + '*'.repeat(Math.max(0, answer.length - 2));
+    socket.emit('letter-hint', { hint: masked });
+  });
+
   // ── Emoji Reaction (with name) ──
   socket.on('emoji-reaction', ({ roomCode, emoji }) => {
     const info = playerSockets[socket.id];
@@ -399,6 +416,7 @@ function startGuessPhase(roomCode) {
   room.phase = 'guess';
   room.guesses = {};
   room.revealUsed = {};
+  room.letterHintUsed = {};
   room.timerEnd = Date.now() + GUESS_TIMER_MS;
 
   broadcastRoomState(roomCode);
