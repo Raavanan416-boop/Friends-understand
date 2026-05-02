@@ -173,6 +173,23 @@ function initUI() {
   $('#btn-coin-shop').onclick = () => { updateCoinUI(); openPanel('coinshop'); };
   $('#btn-profile').onclick = () => { renderProfile(); openPanel('profile'); };
   $('#btn-global-leaderboard').onclick = () => { renderGlobalLB(); openPanel('global-lb'); };
+  $('#btn-question-packs').onclick = () => { renderQuestionPacks(); openPanel('qpacks'); };
+  $('#btn-sound-shop').onclick = () => { renderSoundShop(); openPanel('soundshop'); };
+  $('#btn-world-lb').onclick = () => { renderWorldLB(); openPanel('world-lb'); };
+  $('#btn-close-pub-profile').onclick = () => closePopup('public-profile');
+  // Question pack tabs
+  $$('.qp-tab').forEach(t => t.onclick = () => {
+    $$('.qp-tab').forEach(x => x.classList.remove('active')); t.classList.add('active');
+    $$('.qp-tab-content').forEach(c => c.style.display = 'none');
+    $('#qp-' + t.dataset.qptab).style.display = 'block';
+    if (t.dataset.qptab === 'create') buildPackCreateForm();
+  });
+  $('#btn-save-pack').onclick = saveCustomPack;
+  $('#btn-import-pack').onclick = importPack;
+  // Pack selector in create room
+  $$('.pack-option').forEach(b => b.onclick = () => {
+    $$('.pack-option').forEach(x => x.classList.remove('active')); b.classList.add('active'); sfx('click');
+  });
 
   // Secret coin tap — ALWAYS opens, coins only once per day
   const coinTap = $('#secret-coin-tap');
@@ -345,7 +362,8 @@ function createRoom() {
   const password = $('#input-room-password').value.trim();
   const maxPlayers = parseInt($('#player-count-toggle .toggle-btn.active')?.dataset.value || '2');
   const totalRounds = parseInt($('#round-count-toggle .toggle-btn.active')?.dataset.value || '4');
-  socket.emit('create-room', { playerName: state.playerName, avatar: state.avatar, maxPlayers, totalRounds, roomName, password });
+  const selectedPack = $('.pack-option.active')?.dataset.pack || 'default';
+  socket.emit('create-room', { playerName: state.playerName, avatar: state.avatar, maxPlayers, totalRounds, roomName, password, questionPack: selectedPack });
   sfx('click');
 }
 
@@ -773,9 +791,9 @@ socket.on('guess-results', ({ results, correctAnswer, question, scores, anyCorre
     });
 
     // Sound effects based on match result
-    if (my?.matchType === 'exact') sfx('correct');
+    if (my?.matchType === 'exact') playSoundPack('correct');
     else if (my?.matchType === 'partial') sfx('click');
-    else if (my) sfx('wrong');
+    else if (my) playSoundPack('wrong');
 
     // ─── COIN EARNING: 1 point = 1 coin + BONUS for perfect ───
     if (my && my.matchScore > 0) {
@@ -811,7 +829,7 @@ socket.on('guess-results', ({ results, correctAnswer, question, scores, anyCorre
 });
 
 socket.on('game-over', ({ winner, scores }) => {
-  clearInterval(state.timerInterval); sfx('winner');
+  clearInterval(state.timerInterval); playSoundPack('win');
   $('#gameover-title').textContent = winner.id === state.myId ? '🎉 You Won!' : 'Game Over!';
   $('#gameover-winner').innerHTML = `${winner.avatar} <strong>${escHtml(winner.name)}</strong> wins with ${winner.score} pts!`;
   $('#gameover-scores').innerHTML = scores.map((s,i) => `<div class="lb-row${s.id===winner.id?' highlight':''}"><span class="lb-rank ${['gold','silver','bronze'][i]||''}">#${i+1}</span><span class="lb-avatar">${s.avatar}</span><div class="lb-info"><div class="lb-name">${escHtml(s.name)}</div></div><span class="lb-score">${s.score}</span></div>`).join('');
@@ -830,6 +848,8 @@ socket.on('game-over', ({ winner, scores }) => {
     if (s.id !== state.myId) {
       if (!prof.opponents) prof.opponents = {};
       prof.opponents[s.name] = (prof.opponents[s.name] || 0) + 1;
+      // ─── FRIEND LEVEL TRACKING ───
+      updateFriendData(s.name);
     }
   });
   saveProfile(prof);
@@ -847,6 +867,8 @@ socket.on('game-over', ({ winner, scores }) => {
 
   // ─── GLOBAL LEADERBOARD UPDATE ───
   updateGlobalLeaderboard();
+  // ─── SYNC PROFILE TO SERVER (World LB) ───
+  syncProfileToServer();
 });
 
 // ── Emoji with name ──
@@ -978,7 +1000,11 @@ function updateLB(scores, results) {
   }).join('');
 }
 function updatePL(players) {
-  $('#players-popup-list').innerHTML = (Array.isArray(players)?players:[]).map(p => `<div class="lb-row"><span class="lb-avatar">${p.avatar}</span><div class="lb-info"><div class="lb-name">${escHtml(p.name)}</div></div><span class="lb-score">${p.score}</span></div>`).join('');
+  const list = $('#players-popup-list');
+  list.innerHTML = (Array.isArray(players)?players:[]).map(p => `<div class="pl-row" data-pid="${p.id}" data-pname="${escHtml(p.name)}" data-pavatar="${p.avatar}" data-pscore="${p.score}"><span class="lb-avatar">${p.avatar}</span><div class="lb-info"><div class="lb-name">${escHtml(p.name)}</div></div><span class="lb-score">${p.score}</span></div>`).join('');
+  list.querySelectorAll('.pl-row').forEach(row => row.onclick = () => {
+    openPublicProfile(row.dataset.pname, row.dataset.pavatar);
+  });
 }
 
 // ─── Letter Hint Response ───
@@ -1127,5 +1153,275 @@ window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferr
 function installApp() { if (!deferredPrompt) return showToast('Not available'); deferredPrompt.prompt(); deferredPrompt.userChoice.then(() => { deferredPrompt = null; $('#btn-install-topbar').style.display = 'none'; }); }
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/service-worker.js').catch(()=>{});
 
+// ═══════════════════════════════════════════════════
+// ═══ 1. QUESTION PACKS SYSTEM ═══
+// ═══════════════════════════════════════════════════
+const DEFAULT_PACKS = {
+  love: { name: '❤️ Love', questions: [
+    'What is your partner\'s favorite color?','What is your first date memory?','What gift would make you happiest?',
+    'What song reminds you of love?','What is your love language?','What is the most romantic place?',
+    'What nickname do you use for your partner?','What movie makes you cry?','What is your dream honeymoon?',
+    'What is the sweetest thing someone said to you?'
+  ]},
+  school: { name: '😂 School Memories', questions: [
+    'Who was the class clown?','What was your favorite subject?','Who was your best friend in school?',
+    'What was your most embarrassing moment?','Which teacher was the strictest?','What did you eat for lunch?',
+    'What was your school crush\'s name?','What sport did you play?','What was your nickname?',
+    'What was your favorite school event?'
+  ]},
+  crazy: { name: '😈 Crazy Truth', questions: [
+    'What is the craziest thing you\'ve done?','What secret have you never told?','What is your guilty pleasure?',
+    'What would you do with a million dollars?','What is your weirdest habit?','Who would you swap lives with?',
+    'What is the most daring thing on your bucket list?','What is your biggest fear?','What lie do you tell most?',
+    'If you could break one law, what would it be?'
+  ]}
+};
+function loadCustomPacks() { return JSON.parse(localStorage.getItem('ms-custom-packs') || '[]'); }
+function saveCustomPacks(p) { localStorage.setItem('ms-custom-packs', JSON.stringify(p)); }
+
+function renderQuestionPacks() {
+  const list = $('#qp-list'); if (!list) return;
+  const custom = loadCustomPacks();
+  let h = '';
+  // Default packs
+  Object.entries(DEFAULT_PACKS).forEach(([key, pack]) => {
+    h += `<div class="qp-card"><div class="qp-card-header"><div class="qp-card-name">${pack.name}</div><div class="qp-card-count">${pack.questions.length} Q</div></div>
+    <div class="qp-card-questions">${pack.questions.slice(0,3).map(q=>'• '+q).join('<br>')}<br>...</div></div>`;
+  });
+  // Custom packs
+  custom.forEach((pack, i) => {
+    h += `<div class="qp-card"><div class="qp-card-header"><div class="qp-card-name">✨ ${escHtml(pack.name)}</div><div class="qp-card-count">${pack.questions.length} Q</div></div>
+    <div class="qp-card-questions">${pack.questions.slice(0,3).map(q=>'• '+escHtml(q)).join('<br>')}</div>
+    <div class="qp-card-actions"><button class="qp-share-btn" data-idx="${i}">📤 Share</button><button class="qp-delete-btn" data-idx="${i}">🗑 Delete</button></div></div>`;
+  });
+  if (!custom.length && !Object.keys(DEFAULT_PACKS).length) h = '<p class="empty-state">No packs yet</p>';
+  list.innerHTML = h;
+  list.querySelectorAll('.qp-share-btn').forEach(b => b.onclick = () => sharePack(parseInt(b.dataset.idx)));
+  list.querySelectorAll('.qp-delete-btn').forEach(b => b.onclick = () => { const c = loadCustomPacks(); c.splice(parseInt(b.dataset.idx),1); saveCustomPacks(c); renderQuestionPacks(); showToast('Pack deleted'); refreshPackSelector(); });
+}
+
+function buildPackCreateForm() {
+  const cont = $('#qp-questions-inputs'); if (!cont) return;
+  cont.innerHTML = '';
+  for (let i = 1; i <= 10; i++) {
+    cont.innerHTML += `<div class="qp-q-input"><span class="qp-q-num">${i}.</span><input type="text" class="input-field qp-q-field" placeholder="Question ${i}" maxlength="120" autocomplete="off"></div>`;
+  }
+}
+
+function saveCustomPack() {
+  const name = $('#input-pack-name').value.trim();
+  if (!name) return showToast('Enter a pack name');
+  const fields = $$('.qp-q-field');
+  const questions = [];
+  fields.forEach(f => { if (f.value.trim()) questions.push(f.value.trim()); });
+  if (questions.length < 5) return showToast('Add at least 5 questions');
+  const packs = loadCustomPacks();
+  packs.push({ name, questions });
+  saveCustomPacks(packs);
+  showToast('✅ Pack saved!');
+  refreshPackSelector();
+  // Switch to browse tab
+  $$('.qp-tab').forEach(x => x.classList.remove('active'));
+  $$('.qp-tab')[0].classList.add('active');
+  $$('.qp-tab-content').forEach(c => c.style.display = 'none');
+  $('#qp-browse').style.display = 'block';
+  renderQuestionPacks();
+}
+
+function sharePack(idx) {
+  const packs = loadCustomPacks();
+  if (!packs[idx]) return;
+  const code = btoa(unescape(encodeURIComponent(JSON.stringify(packs[idx]))));
+  navigator.clipboard.writeText(code).then(() => showToast('📋 Share code copied!')).catch(() => {
+    showToast('Code: ' + code.substring(0,20) + '...', 4000);
+  });
+}
+
+function importPack() {
+  const code = $('#input-import-code').value.trim();
+  if (!code) return showToast('Paste a share code');
+  try {
+    const pack = JSON.parse(decodeURIComponent(escape(atob(code))));
+    if (!pack.name || !pack.questions || !pack.questions.length) throw 'Invalid';
+    const packs = loadCustomPacks();
+    packs.push(pack);
+    saveCustomPacks(packs);
+    showToast('✅ Pack imported: ' + pack.name);
+    refreshPackSelector();
+    $('#input-import-code').value = '';
+    renderQuestionPacks();
+  } catch(e) { showToast('❌ Invalid share code'); }
+}
+
+function refreshPackSelector() {
+  const sel = $('#pack-selector'); if (!sel) return;
+  // Remove old custom options
+  sel.querySelectorAll('.pack-option[data-pack^="custom-"]').forEach(e => e.remove());
+  const custom = loadCustomPacks();
+  custom.forEach((p, i) => {
+    const btn = document.createElement('button');
+    btn.className = 'pack-option';
+    btn.dataset.pack = 'custom-' + i;
+    btn.textContent = '✨ ' + p.name;
+    btn.onclick = () => { $$('.pack-option').forEach(x => x.classList.remove('active')); btn.classList.add('active'); sfx('click'); };
+    sel.appendChild(btn);
+  });
+}
+
+// ═══════════════════════════════════════════════════
+// ═══ 2. FRIEND LEVEL SYSTEM ═══
+// ═══════════════════════════════════════════════════
+function loadFriendData() { return JSON.parse(localStorage.getItem('ms-friends') || '{}'); }
+function saveFriendData(d) { localStorage.setItem('ms-friends', JSON.stringify(d)); }
+
+function updateFriendData(opponentName) {
+  const fd = loadFriendData();
+  fd[opponentName] = (fd[opponentName] || 0) + 1;
+  saveFriendData(fd);
+}
+
+function getFriendLevel(opponentName) {
+  const fd = loadFriendData();
+  const matches = fd[opponentName] || 0;
+  if (matches > 10) return { label: '🥇 Best Friend', cls: 'fl-bestfriend', matches };
+  if (matches >= 6) return { label: '😎 Close', cls: 'fl-close', matches };
+  if (matches >= 3) return { label: '🙂 Normal', cls: 'fl-normal', matches };
+  return { label: '😐 Stranger', cls: 'fl-stranger', matches };
+}
+
+// ═══════════════════════════════════════════════════
+// ═══ 3. SOUND PACK SYSTEM ═══
+// ═══════════════════════════════════════════════════
+const SOUND_PACKS = [
+  { id: 'default', name: '🎵 Default Sounds', desc: 'Basic game sounds', price: 0, sounds: ['Beep','Ding','Buzz'], owned: true },
+  { id: 'funny', name: '😂 Funny Sounds', desc: 'Hilarious sound effects for every moment', price: 30, sounds: ['Boing','Slide Whistle','Honk'] },
+  { id: 'victory', name: '🎉 Victory Music', desc: 'Epic victory fanfares and celebrations', price: 50, sounds: ['Fanfare','Confetti','Triumph'] },
+  { id: 'troll', name: '😈 Troll Sounds', desc: 'Maximum trolling potential', price: 40, sounds: ['Sad Trombone','Bruh','Oof'] }
+];
+function loadSoundPacks() { return JSON.parse(localStorage.getItem('ms-sound-packs') || '{"owned":["default"],"active":"default"}'); }
+function saveSoundPacks(d) { localStorage.setItem('ms-sound-packs', JSON.stringify(d)); }
+
+function renderSoundShop() {
+  const spData = loadSoundPacks();
+  const bal = $('#sound-coin-balance'); if (bal) bal.textContent = state.coins;
+  const list = $('#sound-packs-list'); if (!list) return;
+  list.innerHTML = SOUND_PACKS.map(p => {
+    const owned = spData.owned.includes(p.id);
+    const active = spData.active === p.id;
+    let actionHtml = '';
+    if (active) actionHtml = `<button class="sp-action-btn sp-selected-btn">✅ Selected</button>`;
+    else if (owned) actionHtml = `<button class="sp-action-btn sp-select-btn" data-sp="${p.id}">Select</button>`;
+    else actionHtml = `<button class="sp-action-btn sp-buy-btn" data-sp="${p.id}" data-cost="${p.price}" ${state.coins < p.price ? 'disabled' : ''}>🔓 Unlock (${p.price} 💰)</button>`;
+    return `<div class="sound-pack-card${active?' sp-active':''}">
+      <div class="sp-header"><div class="sp-name">${p.name}</div><div class="sp-price${owned?' sp-owned':''}">${owned?'✅ Owned':p.price+' 💰'}</div></div>
+      <div class="sp-desc">${p.desc}</div>
+      <div class="sp-sounds-preview">${p.sounds.map(s=>`<span class="sp-sound-chip">${s}</span>`).join('')}</div>
+      ${actionHtml}
+    </div>`;
+  }).join('');
+  // Wire buttons
+  list.querySelectorAll('.sp-buy-btn').forEach(b => b.onclick = () => {
+    const cost = parseInt(b.dataset.cost);
+    if (!spendCoins(cost)) return showToast('Not enough coins!');
+    const d = loadSoundPacks(); d.owned.push(b.dataset.sp); d.active = b.dataset.sp; saveSoundPacks(d);
+    showToast('🎧 Sound pack unlocked!'); spawnCoinRain(); renderSoundShop();
+  });
+  list.querySelectorAll('.sp-select-btn').forEach(b => b.onclick = () => {
+    const d = loadSoundPacks(); d.active = b.dataset.sp; saveSoundPacks(d);
+    showToast('🎧 Sound pack selected!'); renderSoundShop();
+  });
+}
+
+function playSoundPack(type) {
+  const spData = loadSoundPacks();
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return;
+  const ctx = new AC();
+  function tone(f,d,t='sine',v=.12){const o=ctx.createOscillator(),g=ctx.createGain();o.type=t;o.frequency.value=f;g.gain.setValueAtTime(v,ctx.currentTime);g.gain.exponentialRampToValueAtTime(.001,ctx.currentTime+d);o.connect(g);g.connect(ctx.destination);o.start();o.stop(ctx.currentTime+d)}
+  if (spData.active === 'funny') {
+    if (type==='correct'){tone(600,.1,'sine',.15);setTimeout(()=>tone(900,.15,'sine',.12),100);setTimeout(()=>tone(1200,.1,'sine',.1),200)}
+    else if(type==='wrong'){tone(200,.3,'sawtooth',.1);setTimeout(()=>tone(150,.4,'sawtooth',.08),200)}
+    else if(type==='win'){[800,1000,1200,1400,1600].forEach((f,i)=>setTimeout(()=>tone(f,.2,'sine',.1),i*100))}
+  } else if (spData.active === 'victory') {
+    if(type==='correct'){[523,659,784].forEach((f,i)=>setTimeout(()=>tone(f,.2),i*120))}
+    else if(type==='wrong'){tone(300,.3,'square',.08)}
+    else if(type==='win'){[523,659,784,1047,1319,1568].forEach((f,i)=>setTimeout(()=>tone(f,.25),i*130))}
+  } else if (spData.active === 'troll') {
+    if(type==='correct'){tone(880,.1);setTimeout(()=>tone(1100,.12),80)}
+    else if(type==='wrong'){[400,350,300,250,200].forEach((f,i)=>setTimeout(()=>tone(f,.15,'sawtooth',.1),i*120))}
+    else if(type==='win'){tone(523,.15);setTimeout(()=>tone(659,.15),150);setTimeout(()=>tone(784,.2),300);setTimeout(()=>tone(1047,.3),500)}
+  } else { sfx(type === 'win' ? 'winner' : type); }
+}
+
+// ═══════════════════════════════════════════════════
+// ═══ 4. WORLD LEADERBOARD ═══
+// ═══════════════════════════════════════════════════
+function renderWorldLB() {
+  socket.emit('get-world-leaderboard');
+}
+
+socket.on('world-leaderboard', (data) => {
+  const list = $('#world-lb-list');
+  if (!list) return;
+  if (!data || !data.length) { list.innerHTML = '<p class="empty-state">No players yet. Play to join!</p>'; return; }
+  list.innerHTML = data.sort((a,b) => b.score - a.score).slice(0,50).map((p,i) => {
+    const isMe = p.name === state.playerName;
+    const top3 = i < 3;
+    const rank = getRankInfo(p.score, p.wins || 0);
+    return `<div class="glb-row${isMe?' glb-me':''}${top3?' glb-top3':''}" style="cursor:pointer" data-wname="${escHtml(p.name)}" data-wavatar="${p.avatar||'😀'}">
+      <span class="glb-rank" style="color:${i===0?'#ffd700':i===1?'#c0c0c0':i===2?'#cd7f32':'var(--text3)'}">#${i+1}</span>
+      <span class="glb-avatar">${p.avatar||'😀'}</span>
+      <div class="glb-info"><div class="glb-name">${escHtml(p.name)}${isMe?' (You)':''}</div>
+      <div class="glb-rank-label" style="color:${rank.cls==='rank-legend'?'#ff6b6b':rank.cls==='rank-gold'?'#ffd700':rank.cls==='rank-silver'?'#c0c0c0':'#cd7f32'}">${rank.label}</div></div>
+      <span class="glb-coins">${p.score} 💰</span>
+    </div>`;
+  }).join('');
+  list.querySelectorAll('.glb-row').forEach(row => row.onclick = () => {
+    openPublicProfile(row.dataset.wname, row.dataset.wavatar);
+  });
+});
+
+// ═══════════════════════════════════════════════════
+// ═══ 5. PUBLIC PROFILE VIEW ═══
+// ═══════════════════════════════════════════════════
+function openPublicProfile(name, avatar) {
+  socket.emit('get-player-profile', { name });
+  // Set what we know immediately
+  $('#pub-avatar').textContent = avatar || '😀';
+  $('#pub-name').textContent = name;
+  const fl = getFriendLevel(name);
+  const flEl = $('#pub-friend-level');
+  flEl.textContent = fl.label;
+  flEl.className = 'pub-friend-level ' + fl.cls;
+  // Default values until server responds
+  $('#pub-coins').textContent = '—';
+  $('#pub-matches').textContent = '—';
+  $('#pub-wins').textContent = '—';
+  $('#pub-winrate').textContent = '—';
+  openPopup('public-profile');
+}
+
+socket.on('player-profile', (data) => {
+  if (!data) return;
+  $('#pub-coins').textContent = data.coins || 0;
+  $('#pub-matches').textContent = data.matches || 0;
+  $('#pub-wins').textContent = data.wins || 0;
+  const wr = data.matches > 0 ? Math.round((data.wins||0)/data.matches*100) : 0;
+  $('#pub-winrate').textContent = wr + '%';
+});
+
+// ═══════════════════════════════════════════════════
+// ═══ 6. PROFILE UPDATE ON GAME OVER (Friend tracking) ═══
+// ═══════════════════════════════════════════════════
+// Emit profile data to server for world LB
+function syncProfileToServer() {
+  const prof = loadProfile();
+  socket.emit('sync-profile', {
+    name: state.playerName, avatar: state.avatar, coins: state.coins,
+    matches: prof.matches || 0, wins: prof.wins || 0
+  });
+}
+
 // ─── Boot ───
-document.addEventListener('DOMContentLoaded', () => { initUI(); document.addEventListener('click', () => initSounds(), { once: true }); });
+document.addEventListener('DOMContentLoaded', () => { initUI(); refreshPackSelector(); document.addEventListener('click', () => initSounds(), { once: true }); });
+

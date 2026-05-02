@@ -8,6 +8,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Mind Sync Game</title>
+  <meta name="google-site-verification" content="JkWzH2qniHUCKScLf9t3q0y0yKjjEy2KoTXNWcEmIfw" />
   <link rel="manifest" href="manifest.json">
   <link rel="icon" type="image/svg+xml" href="icons/icon-192.svg">
   <link rel="apple-touch-icon" href="icons/icon-192.svg">
@@ -71,12 +72,15 @@
           <span class="coin-icon secret-coin-trigger" id="secret-coin-tap">💰</span>
           <span class="coin-count" id="home-coin-count">0</span>
         </div>
+        <button class="icon-btn world-lb-btn" id="btn-world-lb" title="World Leaderboard">🌍</button>
         <button class="icon-btn menu-hamburger" id="btn-menu-toggle" title="Menu">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
         </button>
         <!-- Dropdown Menu -->
         <div class="topbar-dropdown" id="topbar-dropdown">
           <button class="dropdown-item" id="btn-coin-shop"><span class="dropdown-icon">🛒</span> Shop</button>
+          <button class="dropdown-item" id="btn-question-packs"><span class="dropdown-icon">🎭</span> Question Packs</button>
+          <button class="dropdown-item" id="btn-sound-shop"><span class="dropdown-icon">🎧</span> Sound Shop</button>
           <button class="dropdown-item" id="btn-profile"><span class="dropdown-icon">👤</span> Profile</button>
           <button class="dropdown-item" id="btn-global-leaderboard"><span class="dropdown-icon">🏆</span> Leaderboard</button>
           <button class="dropdown-item" id="btn-history"><span class="dropdown-icon">⏱</span> History</button>
@@ -126,6 +130,15 @@
               <button class="toggle-btn" data-value="6">6</button>
               <button class="toggle-btn" data-value="8">8</button>
               <button class="toggle-btn" data-value="10">10</button>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Question Pack</label>
+            <div class="pack-selector" id="pack-selector">
+              <button class="pack-option active" data-pack="default">🎲 Default</button>
+              <button class="pack-option" data-pack="love">❤️ Love</button>
+              <button class="pack-option" data-pack="school">😂 School</button>
+              <button class="pack-option" data-pack="crazy">😈 Crazy</button>
             </div>
           </div>
           <button class="btn-primary btn-neon" id="btn-create-room">
@@ -306,6 +319,71 @@
     </div>
   </div>
 
+  <!-- ═══════ QUESTION PACKS PANEL ═══════ -->
+  <div class="slide-panel" id="panel-qpacks">
+    <div class="panel-overlay"></div>
+    <div class="panel-content glass-card">
+      <div class="panel-handle"></div>
+      <h2 class="panel-title">🎭 Question Packs</h2>
+      <div class="qp-tabs">
+        <button class="qp-tab active" data-qptab="browse">Browse</button>
+        <button class="qp-tab" data-qptab="create">Create</button>
+        <button class="qp-tab" data-qptab="import">Import</button>
+      </div>
+      <div class="qp-tab-content" id="qp-browse" style="display:block">
+        <div class="qp-list" id="qp-list"></div>
+      </div>
+      <div class="qp-tab-content" id="qp-create" style="display:none">
+        <div class="form-group"><label>Pack Name</label><input type="text" id="input-pack-name" class="input-field" placeholder="My Pack" maxlength="25" autocomplete="off"></div>
+        <div class="qp-questions-list" id="qp-questions-inputs"></div>
+        <button class="btn-primary btn-neon" id="btn-save-pack">💾 Save Pack</button>
+      </div>
+      <div class="qp-tab-content" id="qp-import" style="display:none">
+        <div class="form-group"><label>Share Code</label><input type="text" id="input-import-code" class="input-field" placeholder="Paste share code here" autocomplete="off"></div>
+        <button class="btn-primary btn-neon" id="btn-import-pack">📥 Import Pack</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════ SOUND SHOP PANEL ═══════ -->
+  <div class="slide-panel" id="panel-soundshop">
+    <div class="panel-overlay"></div>
+    <div class="panel-content glass-card">
+      <div class="panel-handle"></div>
+      <h2 class="panel-title">🎧 Sound Shop</h2>
+      <div class="coin-shop-balance"><span class="coin-icon-lg">💰</span><span class="coin-balance-value" id="sound-coin-balance">0</span><span class="coin-balance-label">coins</span></div>
+      <div class="sound-packs-list" id="sound-packs-list"></div>
+    </div>
+  </div>
+
+  <!-- ═══════ WORLD LEADERBOARD PANEL ═══════ -->
+  <div class="slide-panel" id="panel-world-lb">
+    <div class="panel-overlay"></div>
+    <div class="panel-content glass-card">
+      <div class="panel-handle"></div>
+      <h2 class="panel-title">🌍 World Leaderboard</h2>
+      <div class="world-lb-list" id="world-lb-list"><p class="empty-state">Loading…</p></div>
+    </div>
+  </div>
+
+  <!-- ═══════ PUBLIC PROFILE POPUP ═══════ -->
+  <div class="popup-overlay" id="popup-public-profile">
+    <div class="popup-card glass-card popup-profile-card">
+      <div class="pub-profile-hero">
+        <div class="pub-avatar" id="pub-avatar">😀</div>
+        <div class="pub-name" id="pub-name">Player</div>
+        <div class="pub-friend-level" id="pub-friend-level">😐 Stranger</div>
+      </div>
+      <div class="profile-stats-grid">
+        <div class="profile-stat-card"><div class="stat-icon">💰</div><div class="stat-value" id="pub-coins">0</div><div class="stat-label">Coins</div></div>
+        <div class="profile-stat-card"><div class="stat-icon">🎮</div><div class="stat-value" id="pub-matches">0</div><div class="stat-label">Matches</div></div>
+        <div class="profile-stat-card"><div class="stat-icon">🏆</div><div class="stat-value" id="pub-wins">0</div><div class="stat-label">Wins</div></div>
+        <div class="profile-stat-card"><div class="stat-icon">📊</div><div class="stat-value" id="pub-winrate">0%</div><div class="stat-label">Win Rate</div></div>
+      </div>
+      <button class="btn-secondary popup-close-btn" id="btn-close-pub-profile">Close</button>
+    </div>
+  </div>
+
   <!-- ═══════ SECRET PAGE ═══════ -->
   <div class="slide-panel" id="panel-secret">
     <div class="panel-overlay"></div>
@@ -449,6 +527,7 @@
   <div class="popup-overlay" id="popup-players">
     <div class="popup-card glass-card">
       <h3>👥 Players</h3>
+      <p style="font-size:12px;color:var(--text3);margin-bottom:8px">Tap a player to view profile</p>
       <div class="players-popup-list" id="players-popup-list"></div>
       <button class="btn-secondary popup-close-btn" id="btn-close-players">Close</button>
     </div>

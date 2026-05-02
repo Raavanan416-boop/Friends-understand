@@ -30,6 +30,7 @@ app.get('/api/rooms', (req, res) => {
 const rooms = {};          // roomCode -> room object
 const playerSockets = {};  // socketId -> { roomCode, playerName, avatar }
 const leftPlayers = {};    // socketId -> true — tracks players who explicitly left
+const playerProfiles = {}; // playerName -> { name, avatar, coins, matches, wins }
 
 // ─── Helpers ─────────────────────────────────────────────────
 function generateRoomCode() {
@@ -84,7 +85,7 @@ io.on('connection', (socket) => {
   console.log(`[+] Connected: ${socket.id}`);
 
   // ── Create Room ──
-  socket.on('create-room', ({ playerName, avatar, maxPlayers, totalRounds, roomName, password }) => {
+  socket.on('create-room', ({ playerName, avatar, maxPlayers, totalRounds, roomName, password, questionPack }) => {
     // Prevent ghost re-entry: clear any leftPlayers flag
     delete leftPlayers[socket.id];
 
@@ -246,6 +247,28 @@ io.on('connection', (socket) => {
     const first2 = answer.substring(0, 2);
     const masked = first2 + '*'.repeat(Math.max(0, answer.length - 2));
     socket.emit('letter-hint', { hint: masked });
+  });
+
+  // ── Sync Profile (for World Leaderboard) ──
+  socket.on('sync-profile', ({ name, avatar, coins, matches, wins }) => {
+    if (!name) return;
+    playerProfiles[name] = { name, avatar: avatar || '😀', score: coins || 0, coins: coins || 0, matches: matches || 0, wins: wins || 0 };
+  });
+
+  // ── World Leaderboard ──
+  socket.on('get-world-leaderboard', () => {
+    const lb = Object.values(playerProfiles).sort((a, b) => b.score - a.score).slice(0, 50);
+    socket.emit('world-leaderboard', lb);
+  });
+
+  // ── Get Player Profile ──
+  socket.on('get-player-profile', ({ name }) => {
+    const profile = playerProfiles[name];
+    if (profile) {
+      socket.emit('player-profile', profile);
+    } else {
+      socket.emit('player-profile', { name, avatar: '😀', coins: 0, matches: 0, wins: 0 });
+    }
   });
 
   // ── Emoji Reaction (with name) ──
