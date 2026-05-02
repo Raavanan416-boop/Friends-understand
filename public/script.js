@@ -28,8 +28,10 @@ function saveTasks(t) { localStorage.setItem('ms-tasks', JSON.stringify(t)); }
 
 // ─── Secret Page ───
 let secretTapCount = 0, secretTapTimer = null;
-function canOpenSecret() {
-  const last = localStorage.getItem('ms-secret-date');
+// Secret page can ALWAYS be opened via triple-tap
+// Daily reward is tracked separately
+function canClaimSecretReward() {
+  const last = localStorage.getItem('ms-secret-reward-date');
   return last !== new Date().toDateString();
 }
 
@@ -172,7 +174,7 @@ function initUI() {
   $('#btn-profile').onclick = () => { renderProfile(); openPanel('profile'); };
   $('#btn-global-leaderboard').onclick = () => { renderGlobalLB(); openPanel('global-lb'); };
 
-  // Secret coin tap
+  // Secret coin tap — ALWAYS opens, coins only once per day
   const coinTap = $('#secret-coin-tap');
   if (coinTap) {
     coinTap.addEventListener('click', (e) => {
@@ -180,20 +182,45 @@ function initUI() {
       coinTap.classList.remove('tap-flash'); void coinTap.offsetWidth; coinTap.classList.add('tap-flash');
       secretTapCount++;
       clearTimeout(secretTapTimer);
-      secretTapTimer = setTimeout(() => { secretTapCount = 0; }, 600);
+      secretTapTimer = setTimeout(() => { secretTapCount = 0; }, 1500);
       if (secretTapCount >= 3) {
         secretTapCount = 0;
-        if (canOpenSecret()) {
-          localStorage.setItem('ms-secret-date', new Date().toDateString());
+        // Always open the secret page
+        renderSecretTasks();
+        openPanel('secret');
+        // Give coins only once per day
+        if (canClaimSecretReward()) {
+          localStorage.setItem('ms-secret-reward-date', new Date().toDateString());
           addCoins(10);
           showToast('🎉 Secret Vault opened! +10 bonus coins!', 3000);
           spawnCoinRain();
-          renderSecretTasks();
-          openPanel('secret');
         } else {
-          showToast('🔒 Secret Vault already opened today!', 2000);
+          showToast('✨ Secret Vault opened!', 2000);
         }
       }
+    });
+  }
+
+  // Menu dropdown toggle
+  const menuToggle = $('#btn-menu-toggle');
+  const dropdown = $('#topbar-dropdown');
+  if (menuToggle && dropdown) {
+    menuToggle.addEventListener('click', (e) => {
+      e.stopPropagation();
+      dropdown.classList.toggle('open');
+      sfx('click');
+    });
+    // Close dropdown when clicking outside
+    document.addEventListener('click', (e) => {
+      if (!dropdown.contains(e.target) && e.target !== menuToggle) {
+        dropdown.classList.remove('open');
+      }
+    });
+    // Close dropdown when any item is clicked
+    dropdown.querySelectorAll('.dropdown-item').forEach(item => {
+      item.addEventListener('click', () => {
+        dropdown.classList.remove('open');
+      });
     });
   }
 
@@ -836,12 +863,21 @@ socket.on('emoji-reaction', ({ playerName, emoji }) => {
 // ── Player left ──
 socket.on('player-left', ({ playerName, remainingPlayers }) => {
   showToast(`${playerName} left the game`, 3000);
+  // If in 2-player mode and opponent left, immediately notify and go home
+  if (remainingPlayers < 2 && state.lastRoomState) {
+    clearInterval(state.timerInterval);
+    closeAllPopups();
+    clearTimeout(state._playAgainTimeout);
+    showToast('⚠️ Opponent left. Game ended.', 4000);
+    setTimeout(() => goHome(), 2000);
+  }
 });
 
 // ── Force exit game (server removed this player) ──
 socket.on('force-exit-game', ({ reason }) => {
   clearInterval(state.timerInterval);
   closeAllPopups();
+  clearTimeout(state._playAgainTimeout);
   showToast(reason || 'Game ended', 4000);
   cleanupAndGoHome();
 });
@@ -850,6 +886,7 @@ socket.on('force-exit-game', ({ reason }) => {
 socket.on('game-ended', ({ reason }) => {
   clearInterval(state.timerInterval);
   closeAllPopups();
+  clearTimeout(state._playAgainTimeout);
   showToast(reason || 'Game ended', 4000);
   setTimeout(() => goHome(), 1500);
 });
@@ -892,16 +929,17 @@ socket.on('play-again-request', ({ fromName }) => {
   const iv = setInterval(() => { t -= 100; f.style.width = (t/4000*100)+'%'; if (t <= 0) { clearInterval(iv); closePopup('play-again'); socket.emit('play-again-reject', { roomCode: state.roomCode }); } }, 100);
   state._pat = iv;
 });
-socket.on('play-again-start', () => { closeAllPopups(); showToast('New game starting!'); });
-socket.on('play-again-rejected', ({ byName }) => showToast(`${byName} declined`));
-socket.on('play-again-error', msg => showToast('❌ ' + msg));
+socket.on('play-again-start', () => { clearTimeout(state._playAgainTimeout); closeAllPopups(); showToast('New game starting!'); });
+socket.on('play-again-rejected', ({ byName }) => { clearTimeout(state._playAgainTimeout); showToast(`${byName} declined`); setTimeout(() => goHome(), 1500); });
+socket.on('play-again-error', msg => { clearTimeout(state._playAgainTimeout); showToast('❌ ' + msg); setTimeout(() => goHome(), 1500); });
 
 function requestPlayAgain() {
-  // Check if there are other players
+  // Validate: check if there are other active players
   if (state.lastRoomState) {
     const others = state.lastRoomState.players.filter(p => p.id !== state.myId);
     if (others.length < 1) {
-      showToast('No players available to play');
+      showToast('❌ No player available. Returning home.', 3000);
+      setTimeout(() => goHome(), 1500);
       return;
     }
   }
@@ -909,9 +947,26 @@ function requestPlayAgain() {
   socket.emit('play-again-accept', { roomCode: state.roomCode });
   showToast('Waiting for others…');
   sfx('click');
+
+  // Timeout: if no response in 4 seconds, cancel and go home
+  state._playAgainTimeout = setTimeout(() => {
+    showToast('⏱ Player not interested. Returning home.', 3000);
+    setTimeout(() => goHome(), 1500);
+  }, 4000);
 }
-function acceptPlayAgain() { clearInterval(state._pat); closePopup('play-again'); socket.emit('play-again-accept', { roomCode: state.roomCode }); showToast('Accepted!'); }
-function rejectPlayAgain() { clearInterval(state._pat); closePopup('play-again'); socket.emit('play-again-reject', { roomCode: state.roomCode }); }
+function acceptPlayAgain() {
+  clearInterval(state._pat);
+  clearTimeout(state._playAgainTimeout);
+  closePopup('play-again');
+  socket.emit('play-again-accept', { roomCode: state.roomCode });
+  showToast('Accepted!');
+}
+function rejectPlayAgain() {
+  clearInterval(state._pat);
+  clearTimeout(state._playAgainTimeout);
+  closePopup('play-again');
+  socket.emit('play-again-reject', { roomCode: state.roomCode });
+}
 
 function updateLB(scores, results) {
   const sorted = [...(Array.isArray(scores)?scores:[])].sort((a,b)=>b.score-a.score);

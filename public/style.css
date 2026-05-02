@@ -30,6 +30,18 @@ body{background:linear-gradient(135deg,#0b0b2a 0%,#1a1040 40%,#0d2137 70%,#1a0a3
 .btn-danger-icon{background:rgba(255,107,107,.12);color:var(--danger)}
 .btn-danger-icon:hover{background:rgba(255,107,107,.25)}
 
+/* ═══ HAMBURGER DROPDOWN MENU ═══ */
+.top-bar-right{position:relative}
+.menu-hamburger{background:linear-gradient(135deg,rgba(108,92,231,.15),rgba(253,121,168,.1))!important;border:1px solid rgba(108,92,231,.25)!important}
+.menu-hamburger:hover{background:linear-gradient(135deg,rgba(108,92,231,.25),rgba(253,121,168,.2))!important}
+.topbar-dropdown{position:absolute;top:calc(100% + 8px);right:0;min-width:200px;padding:8px;border-radius:var(--radius);background:rgba(20,20,60,.95);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);border:1px solid rgba(255,255,255,.12);box-shadow:0 12px 40px rgba(0,0,0,.5),0 0 20px rgba(108,92,231,.15);z-index:100;opacity:0;transform:translateY(-8px) scale(.95);pointer-events:none;transition:opacity .25s ease,transform .25s cubic-bezier(.22,1,.36,1)}
+.topbar-dropdown.open{opacity:1;transform:translateY(0) scale(1);pointer-events:all}
+.dropdown-item{width:100%;display:flex;align-items:center;gap:12px;padding:12px 16px;border:none;border-radius:var(--radius-sm);background:transparent;color:var(--text);font-family:var(--font);font-size:14px;font-weight:600;cursor:pointer;transition:.2s;text-align:left}
+.dropdown-item:hover{background:rgba(108,92,231,.15);transform:translateX(4px)}
+.dropdown-item:active{transform:scale(.97)}
+.dropdown-icon{font-size:18px;min-width:24px;text-align:center;line-height:1}
+.dropdown-item+.dropdown-item{margin-top:2px}
+
 /* ═══ LOGIN ═══ */
 #screen-login{align-items:center;justify-content:center;overflow:hidden}
 .login-bg{position:absolute;inset:0;overflow:hidden}

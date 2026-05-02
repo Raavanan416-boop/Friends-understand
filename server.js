@@ -281,9 +281,28 @@ io.on('connection', (socket) => {
     const room = rooms[roomCode];
     if (!room) return socket.emit('play-again-error', 'Room no longer exists');
     const active = getActivePlayers(room);
-    if (active.length < 2) return socket.emit('play-again-error', 'No players available to play');
+    if (active.length < 2) {
+      socket.emit('play-again-error', 'No player available');
+      return;
+    }
+    // Check if requesting player is still in room
+    const isInRoom = active.some(p => p.id === socket.id);
+    if (!isInRoom) {
+      socket.emit('play-again-error', 'You are no longer in this room');
+      return;
+    }
     const info = playerSockets[socket.id];
     if (!info) return;
+
+    // Set up play-again timeout (4 seconds server-side)
+    if (room.playAgainTimer) clearTimeout(room.playAgainTimer);
+    room.playAgainTimer = setTimeout(() => {
+      // Timeout: cancel play-again for all
+      room.playAgainAccepted = null;
+      room.playAgainTimer = null;
+      io.to(roomCode).emit('play-again-error', 'Play again timed out. No response.');
+    }, 4500);
+
     socket.to(roomCode).emit('play-again-request', { fromName: info.playerName, fromId: socket.id });
   });
 
@@ -295,11 +314,15 @@ io.on('connection', (socket) => {
 
     const active = getActivePlayers(room);
     if (active.length < 2) {
-      io.to(roomCode).emit('play-again-error', 'No players available to play');
+      room.playAgainAccepted = null;
+      if (room.playAgainTimer) { clearTimeout(room.playAgainTimer); room.playAgainTimer = null; }
+      io.to(roomCode).emit('play-again-error', 'No player available');
       return;
     }
     const allAccepted = active.every(p => room.playAgainAccepted.has(p.id));
     if (allAccepted) {
+      // Clear timeout
+      if (room.playAgainTimer) { clearTimeout(room.playAgainTimer); room.playAgainTimer = null; }
       room.playAgainAccepted = null;
       room.players = active; // Clean inactive
       room.turnOrder = room.players.map((_, i) => i).sort(() => Math.random() - 0.5);
@@ -315,6 +338,9 @@ io.on('connection', (socket) => {
   socket.on('play-again-reject', ({ roomCode }) => {
     const room = rooms[roomCode];
     if (!room) return;
+    // Clear timeout
+    if (room.playAgainTimer) { clearTimeout(room.playAgainTimer); room.playAgainTimer = null; }
+    room.playAgainAccepted = null;
     const info = playerSockets[socket.id];
     io.to(roomCode).emit('play-again-rejected', { byName: info?.playerName });
   });
@@ -865,6 +891,9 @@ function handleLeave(socket, roomCode, isDisconnect = false) {
   if (room.guesses) delete room.guesses[socket.id];
   // Remove from playAgainAccepted if present
   if (room.playAgainAccepted) room.playAgainAccepted.delete(socket.id);
+  // Clear play-again timer if active (prevent ghost play-again)
+  if (room.playAgainTimer) { clearTimeout(room.playAgainTimer); room.playAgainTimer = null; }
+  room.playAgainAccepted = null;
 
   // ═══ STEP 5: Tell the leaving player to force-exit (stop listening) ═══
   // This fires BEFORE we emit to the room, so the leaving player gets it
