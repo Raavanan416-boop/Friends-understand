@@ -426,11 +426,36 @@ function renderHistory() {
   }
   // Show delete button when there's history
   if (deleteBtn) deleteBtn.style.display = 'block';
-  l.innerHTML = state.history.slice(0, 20).map((h, idx) => `<div class="history-item" data-hidx="${idx}"><div class="h-date">${h.date}</div><div class="h-result">${h.winner ? '🏆 Winner: ' + escHtml(h.winner) : h.result}</div><div class="h-score">Score: ${h.score} | Players: ${h.players}</div></div>`).join('');
-  l.querySelectorAll('.history-item').forEach(el => el.onclick = () => {
+  l.innerHTML = state.history.slice(0, 20).map((h, idx) => `<div class="history-item" data-hidx="${idx}">
+    <div style="display:flex;align-items:center;justify-content:space-between">
+      <div class="h-date">${h.date}</div>
+      <button class="history-delete-single" data-hidx="${idx}" title="Delete this match" style="background:none;border:none;cursor:pointer;font-size:18px;padding:4px 8px;border-radius:8px;transition:.2s;line-height:1">🗑</button>
+    </div>
+    <div class="h-result">${h.winner ? '🏆 Winner: ' + escHtml(h.winner) : h.result}</div>
+    <div class="h-score">Score: ${h.score} | Players: ${h.players}</div>
+  </div>`).join('');
+  // Click on item to view details
+  l.querySelectorAll('.history-item').forEach(el => el.onclick = (e) => {
+    // Don't open detail if delete button was clicked
+    if (e.target.closest('.history-delete-single')) return;
     const idx = parseInt(el.dataset.hidx);
     openHistoryDetail(idx);
   });
+  // Wire up single delete buttons
+  l.querySelectorAll('.history-delete-single').forEach(btn => btn.onclick = (e) => {
+    e.stopPropagation();
+    const idx = parseInt(btn.dataset.hidx);
+    deleteSingleHistory(idx);
+  });
+}
+
+function deleteSingleHistory(idx) {
+  if (!confirm('Delete this match?')) return;
+  state.history.splice(idx, 1);
+  localStorage.setItem('ms-history', JSON.stringify(state.history));
+  renderHistory();
+  showToast('✅ Match deleted!');
+  sfx('click');
 }
 
 function deleteAllHistory() {
@@ -1553,15 +1578,54 @@ function renderQuestionPacks() {
         : `<button class="qp-buy-btn" data-pack="${key}">🔓 Unlock (${pack.cost} 💰)</button>`
       }</div></div>`;
   });
-  // Custom packs
+  // Local custom packs
   custom.forEach((pack, i) => {
     h += `<div class="qp-card qp-owned"><div class="qp-card-header"><div class="qp-card-name">✨ ${escHtml(pack.name)}</div><div class="qp-card-count">${pack.questions.length} Q</div></div>
     <div class="qp-card-questions">${pack.questions.slice(0,3).map(q=>'• '+escHtml(q)).join('<br>')}</div>
     <div class="qp-card-actions"><button class="qp-delete-btn" data-idx="${i}">🗑 Delete</button></div></div>`;
   });
+
+  // ═══ FIREBASE PACKS: Show ALL packs from Firebase (visible to ALL users) ═══
+  const fbPacks = _firebasePacksCache || {};
+  const fbEntries = Object.entries(fbPacks);
+  if (fbEntries.length > 0) {
+    h += '<div style="margin-top:16px;font-size:13px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:2px;margin-bottom:10px">🌐 Community Packs</div>';
+    fbEntries.forEach(([id, p]) => {
+      const isMine = p.creator === state.playerName;
+      const buyerNames = Object.keys(p.buyers || {});
+      const isOwned = buyerNames.includes(state.playerName) || isMine;
+      // Check if already in local custom packs (by serverPackId)
+      const alreadyLocal = custom.some(cp => cp.serverPackId === id);
+      if (alreadyLocal) return; // Skip if already shown as local pack
+      let actionHtml = '';
+      if (isMine) actionHtml = '<span class="qp-owned-badge">✨ Your Pack</span>';
+      else if (isOwned) actionHtml = '<span class="qp-owned-badge">✅ Owned</span>';
+      else actionHtml = `<button class="qp-buy-btn-firebase" data-fpid="${id}" ${state.coins < (p.price || 50) ? 'disabled' : ''}>🔓 Buy (${p.price || 50} 💰)</button>`;
+      h += `<div class="qp-card${isOwned?' qp-owned':''}">
+        <div class="qp-card-header"><div class="qp-card-name">${escHtml(p.name || 'Unnamed')}</div><div class="qp-card-count">${(p.questions || []).length} Q</div></div>
+        <div style="font-size:11px;color:var(--text3);margin-bottom:4px">by ${escHtml(p.creator || 'Unknown')}</div>
+        <div class="qp-card-questions">${(p.questions || []).slice(0,3).map(q=>'• '+escHtml(q)).join('<br>')}...</div>
+        <div class="qp-card-actions">${actionHtml}</div>
+      </div>`;
+    });
+  }
+
   list.innerHTML = h || '<p class="empty-state">No packs yet</p>';
   list.querySelectorAll('.qp-buy-btn').forEach(b => b.onclick = () => buyPack(b.dataset.pack));
   list.querySelectorAll('.qp-delete-btn').forEach(b => b.onclick = () => { const c = loadCustomPacks(); c.splice(parseInt(b.dataset.idx),1); saveCustomPacks(c); renderQuestionPacks(); showToast('Pack deleted'); refreshPackSelector(); });
+  // Wire Firebase buy buttons
+  list.querySelectorAll('.qp-buy-btn-firebase').forEach(b => b.onclick = () => {
+    const pid = b.dataset.fpid;
+    const packData = _firebasePacksCache[pid];
+    if (!packData) return showToast('❌ Pack not found');
+    firebaseBuyPack(pid, {
+      ...packData,
+      id: pid,
+      price: packData.price || 50,
+      buyers: packData.buyers || {}
+    });
+  });
+  console.log('[Packs] Rendered', fbEntries.length, 'Firebase packs +', custom.length, 'local packs');
 }
 
 function buildPackCreateForm() {
@@ -1636,13 +1700,19 @@ function saveCustomPack() {
 // Cache of marketplace packs from Firebase (updated in real-time)
 let _firebasePacksCache = {};
 
-// ─── Real-time Firebase listener: auto-updates marketplace UI ───
+// ─── Real-time Firebase listener: auto-updates ALL pack UIs ───
 db.ref('packs').on('value', snapshot => {
   _firebasePacksCache = snapshot.val() || {};
+  console.log('[Firebase] Packs updated:', Object.keys(_firebasePacksCache).length, 'total packs');
   // Auto-refresh marketplace UI if visible
   const mpList = $('#qp-marketplace-list');
   if (mpList && mpList.offsetParent !== null) {
     displayMarketplacePacks(_firebasePacksCache);
+  }
+  // Auto-refresh browse tab to show community packs
+  const browseList = $('#qp-list');
+  if (browseList && browseList.offsetParent !== null) {
+    renderQuestionPacks();
   }
 });
 
