@@ -676,9 +676,15 @@ body{background:linear-gradient(135deg,#0b0b2a 0%,#1a1040 40%,#0d2137 70%,#1a0a3
 .pub-friend-level.fl-close{color:var(--cyan);background:rgba(0,206,201,.1);border-color:rgba(0,206,201,.25)}
 .pub-friend-level.fl-bestfriend{color:#ffd700;background:linear-gradient(135deg,rgba(255,215,0,.12),rgba(255,165,0,.08));border-color:rgba(255,215,0,.3);animation:bannerGlow 2s ease-in-out infinite}
 
-/* Player list clickable rows */
-.pl-row{display:flex;align-items:center;gap:10px;padding:11px 14px;border-radius:var(--radius-sm);background:var(--surface);border:1px solid var(--glass-border);transition:.25s;cursor:pointer}
-.pl-row:hover{background:rgba(108,92,231,.1);border-color:rgba(108,92,231,.25);transform:translateX(3px)}
+/* Player list rows — only View button opens profile, not row click */
+.pl-row{display:flex;align-items:center;gap:10px;padding:11px 14px;border-radius:var(--radius-sm);background:var(--surface);border:1px solid var(--glass-border);transition:.25s}
+.pl-row .lb-score-label{font-size:11px;color:var(--text3)}
+.pl-view-btn{padding:5px 12px;border:1.5px solid rgba(108,92,231,.3);border-radius:20px;background:rgba(108,92,231,.1);color:var(--accent);font-family:var(--font);font-size:11px;font-weight:700;cursor:pointer;transition:.25s;white-space:nowrap;flex-shrink:0}
+.pl-view-btn:hover{background:rgba(108,92,231,.25);border-color:rgba(108,92,231,.5);transform:scale(1.05)}
+.pl-view-btn:active{transform:scale(.95)}
+
+/* Friend match tag in global leaderboard */
+.glb-friend-tag{display:inline-block;padding:2px 8px;border-radius:12px;font-size:10px;font-weight:700;background:linear-gradient(135deg,rgba(253,121,168,.12),rgba(108,92,231,.08));color:var(--pink);border:1px solid rgba(253,121,168,.2);margin-top:2px}
 
 /* ═══ PROFILE FRIENDS LIST ═══ */
 .profile-section-title{font-size:13px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:2px;margin:18px 0 10px;padding-left:2px}
@@ -834,3 +840,123 @@ body{background:linear-gradient(135deg,#0b0b2a 0%,#1a1040 40%,#0d2137 70%,#1a0a3
 .skip-turn-btn:hover:not(:disabled){background:linear-gradient(135deg,rgba(255,107,107,.18),rgba(255,107,107,.1));border-color:rgba(255,107,107,.5);transform:translateY(-1px)}
 .skip-turn-btn:disabled{opacity:.35;cursor:not-allowed}
 
+/* ═══ FIREBASE PACK DELETE BUTTON ═══ */
+.qp-delete-btn-firebase,.mp-delete-btn{padding:6px 14px;border:1px solid rgba(255,107,107,.25);border-radius:20px;background:rgba(255,107,107,.08);color:var(--danger);font-family:var(--font);font-size:11px;font-weight:700;cursor:pointer;transition:.25s;white-space:nowrap}
+.qp-delete-btn-firebase:hover,.mp-delete-btn:hover{background:rgba(255,107,107,.2);border-color:rgba(255,107,107,.5);transform:translateY(-1px);box-shadow:0 4px 12px rgba(255,107,107,.2)}
+.qp-delete-btn-firebase:active,.mp-delete-btn:active{transform:scale(.95)}
+
+/* ═══ GAME OVER ADD FRIEND BUTTON ═══ */
+.gameover-add-friend-btn{transition:.25s!important}
+.gameover-add-friend-btn:hover{transform:translateY(-1px)!important;box-shadow:0 4px 12px rgba(108,92,231,.3)!important}
+.gameover-add-friend-btn:disabled{opacity:.5!important;cursor:default!important;transform:none!important;box-shadow:none!important}
+
+/* ═══ CLICKABLE FRIEND ROWS ═══ */
+.friend-row:hover{cursor:pointer;transform:translateY(-1px);border-color:rgba(108,92,231,.3)}
+
+/* ═══ CUSTOM CONFIRM MODAL ═══ */
+.confirm-modal-overlay{
+  position:fixed;top:0;left:0;width:100%;height:100%;
+  background:rgba(0,0,0,.65);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+  display:flex;justify-content:center;align-items:center;
+  z-index:800;padding:24px
+}
+.confirm-modal-box{
+  background:linear-gradient(135deg,#1a1a3e 0%,#2a2a50 50%,#1e1e40 100%);
+  padding:28px 24px;border-radius:24px;width:88%;max-width:340px;
+  text-align:center;
+  box-shadow:0 0 40px rgba(0,0,0,.6),0 0 80px rgba(108,92,231,.15),inset 0 1px 0 rgba(255,255,255,.06);
+  border:1.5px solid rgba(255,255,255,.1);
+  animation:confirmPop .35s cubic-bezier(.22,1,.36,1)
+}
+@keyframes confirmPop{
+  from{transform:scale(.7) translateY(20px);opacity:0}
+  60%{transform:scale(1.03) translateY(-3px);opacity:1}
+  to{transform:scale(1) translateY(0);opacity:1}
+}
+.confirm-modal-icon{font-size:48px;margin-bottom:12px;animation:confirmIconPulse .6s ease}
+@keyframes confirmIconPulse{0%{transform:scale(0) rotate(-20deg)}60%{transform:scale(1.2) rotate(5deg)}100%{transform:scale(1) rotate(0)}}
+.confirm-modal-title{font-size:20px;font-weight:800;color:var(--text);margin-bottom:8px}
+.confirm-modal-msg{font-size:13px;color:var(--text2);line-height:1.5;margin-bottom:20px}
+.confirm-modal-buttons{display:flex;gap:12px}
+.confirm-modal-btn{
+  flex:1;padding:12px 16px;border:none;border-radius:14px;
+  font-family:var(--font);font-size:14px;font-weight:700;cursor:pointer;
+  transition:.25s;position:relative;overflow:hidden
+}
+.confirm-modal-btn:active{transform:scale(.95)}
+.confirm-yes{
+  background:linear-gradient(135deg,#ff4d4d,#cc2222);color:#fff;
+  box-shadow:0 4px 18px rgba(255,77,77,.35)
+}
+.confirm-yes:hover{box-shadow:0 6px 25px rgba(255,77,77,.5);transform:translateY(-1px)}
+.confirm-no{
+  background:linear-gradient(135deg,#4caf50,#2e7d32);color:#fff;
+  box-shadow:0 4px 18px rgba(76,175,80,.3)
+}
+.confirm-no:hover{box-shadow:0 6px 25px rgba(76,175,80,.45);transform:translateY(-1px)}
+
+/* ═══ REDESIGNED SHOP ADVANTAGE CARDS ═══ */
+.shop-adv-card{
+  padding:18px;border-radius:var(--radius);
+  background:linear-gradient(135deg,rgba(255,255,255,.05),rgba(108,92,231,.04));
+  border:1.5px solid var(--glass-border);
+  transition:.3s;position:relative;overflow:hidden
+}
+.shop-adv-card::before{
+  content:'';position:absolute;top:0;left:-100%;width:50%;height:100%;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.03),transparent);
+  transition:left .6s ease
+}
+.shop-adv-card:hover{
+  border-color:rgba(108,92,231,.35);
+  background:linear-gradient(135deg,rgba(255,255,255,.07),rgba(108,92,231,.06));
+  transform:translateY(-2px);
+  box-shadow:0 8px 25px rgba(0,0,0,.2),0 0 15px rgba(108,92,231,.1)
+}
+.shop-adv-card:hover::before{left:150%}
+.shop-adv-header{display:flex;align-items:center;gap:14px;margin-bottom:10px}
+.shop-adv-icon{font-size:34px;flex-shrink:0;width:48px;height:48px;display:flex;align-items:center;justify-content:center;border-radius:14px;background:rgba(108,92,231,.1);border:1px solid rgba(108,92,231,.2)}
+.shop-adv-title{flex:1}
+.shop-adv-name{font-weight:800;font-size:15px;color:var(--text)}
+.shop-adv-cost{font-size:13px;font-weight:700;color:var(--warning);margin-top:2px}
+.shop-adv-desc{font-size:12px;color:var(--text2);line-height:1.5;margin-bottom:12px;padding-left:2px}
+.shop-adv-footer{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.shop-adv-owned{font-size:12px;font-weight:700;color:var(--text3)}
+.shop-adv-owned strong{color:var(--success);font-size:14px}
+.shop-adv-buy-btn{
+  padding:10px 24px;border:none;border-radius:12px;
+  background:linear-gradient(135deg,var(--primary),var(--pink));
+  color:#fff;font-family:var(--font);font-size:13px;font-weight:700;
+  cursor:pointer;transition:.25s;white-space:nowrap;
+  box-shadow:0 4px 15px rgba(108,92,231,.3);
+  position:relative;overflow:hidden
+}
+.shop-adv-buy-btn::before{
+  content:'';position:absolute;inset:0;
+  background:linear-gradient(135deg,transparent 30%,rgba(255,255,255,.15) 50%,transparent 70%);
+  transform:translateX(-100%);transition:none
+}
+.shop-adv-buy-btn:hover{transform:translateY(-2px);box-shadow:0 6px 22px rgba(108,92,231,.45)}
+.shop-adv-buy-btn:hover::before{transform:translateX(100%);transition:transform .6s}
+.shop-adv-buy-btn:active{transform:scale(.95)}
+.shop-adv-buy-btn:disabled{opacity:.35;cursor:not-allowed;transform:none;box-shadow:none}
+.shop-items{display:flex;flex-direction:column;gap:12px;margin-bottom:16px}
+
+/* ═══ FREEZE TIMER VISUAL STATE ═══ */
+.timer-fill.frozen{
+  background:linear-gradient(90deg,#00bcd4,#4dd0e1,#80deea)!important;
+  animation:freezePulse 1s ease-in-out infinite!important
+}
+.timer-text.frozen{
+  color:#4dd0e1!important;
+  text-shadow:0 0 12px rgba(77,208,225,.5),0 0 24px rgba(77,208,225,.25)!important;
+  animation:freezeTextPulse 1s ease-in-out infinite!important
+}
+@keyframes freezePulse{0%,100%{box-shadow:0 0 8px rgba(77,208,225,.3)}50%{box-shadow:0 0 20px rgba(77,208,225,.6)}}
+@keyframes freezeTextPulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.7;transform:scale(1.05)}}
+
+/* ═══ NEW ADVANTAGE BUTTON VARIANTS ═══ */
+.advantage-btn.adv-freeze{border-color:rgba(77,208,225,.25);background:linear-gradient(135deg,rgba(77,208,225,.08),rgba(0,188,212,.04));color:#4dd0e1}
+.advantage-btn.adv-freeze:hover:not(:disabled){background:linear-gradient(135deg,rgba(77,208,225,.2),rgba(0,188,212,.1));border-color:rgba(77,208,225,.5);box-shadow:0 4px 15px rgba(77,208,225,.2)}
+.advantage-btn.adv-autohint{border-color:rgba(255,193,7,.25);background:linear-gradient(135deg,rgba(255,193,7,.08),rgba(255,152,0,.04));color:#ffc107}
+.advantage-btn.adv-autohint:hover:not(:disabled){background:linear-gradient(135deg,rgba(255,193,7,.2),rgba(255,152,0,.1));border-color:rgba(255,193,7,.5);box-shadow:0 4px 15px rgba(255,193,7,.2)}

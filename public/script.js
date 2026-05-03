@@ -25,11 +25,11 @@ const GUESS_TIMER_MS    = 25000;
 const QUESTION_WARN_SEC = 10;
 const GUESS_WARN_SEC    = 5;
 // Advantage costs (SHOP ONLY — buy in shop, use in game)
-const ADV_COST = { reveal: 20, letterHint: 15, skip: 25, double: 30 };
+const ADV_COST = { reveal: 20, letterHint: 15, skip: 25, double: 30, freeze: 30, autoHint: 25 };
 
 // ─── Inventory System (Buy in Shop → Use in Game) ───
 function loadInventory() {
-  const def = {reveal:0,letterHint:0,skip:0,double:0};
+  const def = {reveal:0,letterHint:0,skip:0,double:0,freeze:0,autoHint:0};
   const stored = JSON.parse(localStorage.getItem('ms-inventory') || '{}');
   return {...def, ...stored};
 }
@@ -93,7 +93,7 @@ function loadPlayerFromFirebase(callback) {
       if (data.inventory) {
         const local = loadInventory();
         const merged = {};
-        for (const k of ['reveal','letterHint','skip','double']) {
+        for (const k of ['reveal','letterHint','skip','double','freeze','autoHint']) {
           merged[k] = Math.max(local[k] || 0, data.inventory[k] || 0);
         }
         localStorage.setItem('ms-inventory', JSON.stringify(merged));
@@ -250,6 +250,27 @@ function closeAllPopups(){$$('.popup-overlay').forEach(p=>p.classList.remove('op
 function showToast(m,d=2500){const t=$('#toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),d)}
 function escHtml(s){return s?s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'):''}
 
+// ─── Custom Confirm Modal (replaces all confirm() calls) ───
+function showConfirmModal({ icon, title, message, yesText, noText, onYes, onNo }) {
+  const overlay = $('#confirm-modal');
+  $('#confirm-modal-icon').textContent = icon || '⚠️';
+  $('#confirm-modal-title').textContent = title || 'Are you sure?';
+  $('#confirm-modal-msg').textContent = message || 'This action cannot be undone.';
+  const yesBtn = $('#confirm-modal-yes');
+  const noBtn = $('#confirm-modal-no');
+  yesBtn.textContent = yesText || 'Yes';
+  noBtn.textContent = noText || 'No';
+  overlay.style.display = 'flex';
+  sfx('click');
+  function cleanup() {
+    overlay.style.display = 'none';
+    yesBtn.onclick = null;
+    noBtn.onclick = null;
+  }
+  yesBtn.onclick = () => { cleanup(); if (onYes) onYes(); };
+  noBtn.onclick = () => { cleanup(); if (onNo) onNo(); };
+}
+
 // Ripple effect
 document.addEventListener('click', e => {
   const btn = e.target.closest('.btn-primary,.btn-secondary,.toggle-btn,.icon-btn,.game-top-btn,.emoji-btn');
@@ -272,6 +293,8 @@ function initUI() {
     // Load from Firebase & setup online status
     loadPlayerFromFirebase(() => { updateCoinUI(); });
     setupOnlineStatus();
+    // Auto-register in global leaderboard on every app load
+    setTimeout(() => updateGlobalLeaderboard(), 600);
     // Daily reward check
     if (canClaimDaily()) setTimeout(() => openPopup('daily-reward'), 800);
   } else { showScreen('login'); }
@@ -442,7 +465,7 @@ function initUI() {
   $('#btn-start-game').onclick = startGame;
 
   // Game
-  $('#btn-players-list').onclick = () => openPopup('players');
+  $('#btn-players-list').onclick = () => { if (state.lastRoomState) updatePL(state.lastRoomState.players); openPopup('players'); };
   $('#btn-leaderboard').onclick = () => openPopup('leaderboard');
   $('#btn-leave-game').onclick = () => openPopup('leave');
   $('#btn-keep-playing').onclick = () => closePopup('leave');
@@ -479,6 +502,8 @@ function doLogin() {
   loadPlayerFromFirebase(() => { updateCoinUI(); });
   setupOnlineStatus();
   syncProfileToServer();
+  // Auto-register in global leaderboard so every logged-in player appears
+  updateGlobalLeaderboard();
 }
 
 function saveName() {
@@ -565,12 +590,20 @@ function renderHistory() {
 }
 
 function deleteSingleHistory(idx) {
-  if (!confirm('Delete this match?')) return;
-  state.history.splice(idx, 1);
-  localStorage.setItem('ms-history', JSON.stringify(state.history));
-  renderHistory();
-  showToast('✅ Match deleted!');
-  sfx('click');
+  showConfirmModal({
+    icon: '🗑',
+    title: 'Delete Match?',
+    message: 'Are you sure you want to delete this match record?',
+    yesText: 'Delete',
+    noText: 'Cancel',
+    onYes: () => {
+      state.history.splice(idx, 1);
+      localStorage.setItem('ms-history', JSON.stringify(state.history));
+      renderHistory();
+      showToast('✅ Match deleted!');
+      sfx('click');
+    }
+  });
 }
 
 function deleteAllHistory() {
@@ -758,6 +791,20 @@ function startTimer(endTime, totalMs, warnSec) {
   tick(); state.timerInterval = setInterval(tick, 200);
 }
 
+// ─── Freeze Timer (Advantage: pause for N ms) ───
+function freezeTimer(durationMs) {
+  clearInterval(state.timerInterval);
+  const fill = $('#timer-fill'), text = $('#timer-text');
+  if (fill) { fill.classList.add('frozen'); fill.style.transition = 'none'; }
+  if (text) { text.classList.add('frozen'); text.textContent = '❄️ ' + text.textContent; }
+  // After freeze duration, restart timer with extended time
+  setTimeout(() => {
+    if (fill) { fill.classList.remove('frozen'); fill.style.transition = ''; }
+    if (text) { text.classList.remove('frozen'); }
+    // Resume the existing timer tick (it auto-restarts on next room-state)
+  }, durationMs);
+}
+
 // ─── Game Render ───
 function renderGameContent(data) {
   const gc = $('#game-content');
@@ -837,6 +884,8 @@ function renderGameContent(data) {
     state.usedReveal = false;
     state.usedLetterHint = false;
     state.usedDoubleScore = false;
+    state.usedFreeze = false;
+    state.usedAutoHint = false;
     if (isMyTurn) {
       gc.innerHTML = `<div class="game-question-display"><div class="q-label">Your Question</div><div class="q-text">${escHtml(data.question)}</div></div>
         <div class="waiting-turn-msg"><span class="wtm-emoji">⏳</span><p>Others are guessing…</p></div>`;
@@ -848,10 +897,14 @@ function renderGameContent(data) {
       const revealCount = getInventoryCount('reveal');
       const letterCount = getInventoryCount('letterHint');
       const doubleCount = getInventoryCount('double');
+      const freezeCount = getInventoryCount('freeze');
+      const autoHintCount = getInventoryCount('autoHint');
       const hasReveal = revealCount > 0;
       const hasLetter = letterCount > 0;
       const hasDouble = doubleCount > 0;
-      const hasAny = hasReveal || hasLetter || hasDouble;
+      const hasFreeze = freezeCount > 0;
+      const hasAutoHint = autoHintCount > 0;
+      const hasAny = hasReveal || hasLetter || hasDouble || hasFreeze || hasAutoHint;
 
       gc.innerHTML = `<div class="game-question-display"><div class="q-label">${escHtml(tp)}'s Question</div><div class="q-text">${escHtml(data.question)}</div></div>
         <div class="answer-card-wrapper">
@@ -880,6 +933,12 @@ function renderGameContent(data) {
           </button>
           <button class="advantage-btn" id="btn-adv-double" ${!hasDouble ? 'disabled' : ''}>
             <span class="adv-icon">✨</span> Double Score <span class="adv-cost">(${doubleCount} left)</span>
+          </button>
+          <button class="advantage-btn adv-freeze" id="btn-adv-freeze" ${!hasFreeze ? 'disabled' : ''}>
+            <span class="adv-icon">⏳❄️</span> Freeze Timer <span class="adv-cost">(${freezeCount} left)</span>
+          </button>
+          <button class="advantage-btn adv-autohint" id="btn-adv-autohint" ${!hasAutoHint ? 'disabled' : ''}>
+            <span class="adv-icon">💡</span> Auto Hint <span class="adv-cost">(${autoHintCount} left)</span>
           </button>
         </div>
         ${!hasAny ? '<div class="shop-hint-msg">🛒 Buy advantages from Shop</div>' : ''}
@@ -919,6 +978,30 @@ function renderGameContent(data) {
         $('#btn-adv-double').classList.add('used');
         $('#btn-adv-double').innerHTML = '<span class="adv-icon">\u2705</span> 2x Active';
         showToast('\u2728 Double Score activated! Next correct guess earns 2x!');
+        sfx('click');
+      };
+      // Freeze Timer — pauses timer for 5 seconds (client-side visual freeze)
+      $('#btn-adv-freeze').onclick = () => {
+        if (state.usedFreeze) return;
+        if (!useInventoryItem('freeze')) return showToast('❌ No Freeze items! Buy from Shop');
+        state.usedFreeze = true; state.usedAnyAdvantage = true;
+        $('#btn-adv-freeze').disabled = true;
+        $('#btn-adv-freeze').classList.add('used');
+        $('#btn-adv-freeze').innerHTML = '<span class="adv-icon">✅</span> Frozen!';
+        freezeTimer(5000);
+        showToast('⏳❄️ Timer frozen for 5 seconds!', 2500);
+        sfx('click');
+      };
+      // Auto Hint — automatically shows 2 correct letters (same as letter hint but auto)
+      $('#btn-adv-autohint').onclick = () => {
+        if (state.usedAutoHint) return;
+        if (!useInventoryItem('autoHint')) return showToast('❌ No Auto Hint items! Buy from Shop');
+        state.usedAutoHint = true; state.usedAnyAdvantage = true;
+        $('#btn-adv-autohint').disabled = true;
+        $('#btn-adv-autohint').classList.add('used');
+        $('#btn-adv-autohint').innerHTML = '<span class="adv-icon">✅</span> Hinted!';
+        socket.emit('use-letter-hint', { roomCode: state.roomCode });
+        showToast('💡 Auto Hint activated! 2 letters revealed!', 2500);
         sfx('click');
       };
       $('#btn-submit-guess').onclick = () => {
@@ -1263,7 +1346,24 @@ socket.on('game-over', ({ winner, scores, packName, totalRounds }) => {
   isInGame = false;
   $('#gameover-title').textContent = winner.id === state.myId ? '🎉 You Won!' : 'Game Over!';
   $('#gameover-winner').innerHTML = `${winner.avatar} <strong>${escHtml(winner.name)}</strong> wins with ${winner.score} pts!`;
-  $('#gameover-scores').innerHTML = scores.map((s,i) => `<div class="lb-row${s.id===winner.id?' highlight':''}"><span class="lb-rank ${['gold','silver','bronze'][i]||''}">#${i+1}</span><span class="lb-avatar">${s.avatar}</span><div class="lb-info"><div class="lb-name">${escHtml(s.name)}</div></div><span class="lb-score">${s.score}</span></div>`).join('');
+  // Show scores + Add Friend buttons for opponents
+  $('#gameover-scores').innerHTML = scores.map((s,i) => {
+    const isMe = s.id === state.myId;
+    let addFriendHtml = '';
+    if (!isMe) {
+      addFriendHtml = `<button class="gameover-add-friend-btn" data-fname="${escHtml(s.name)}" data-favatar="${s.avatar}" style="margin-left:8px;padding:4px 10px;border-radius:10px;border:none;background:linear-gradient(135deg,#6c5ce7,#a29bfe);color:#fff;font-size:11px;font-weight:600;cursor:pointer">🧑‍🤝‍🧑 Add</button>`;
+    }
+    return `<div class="lb-row${s.id===winner.id?' highlight':''}"><span class="lb-rank ${['gold','silver','bronze'][i]||''}">#${i+1}</span><span class="lb-avatar">${s.avatar}</span><div class="lb-info"><div class="lb-name">${escHtml(s.name)}</div></div><span class="lb-score">${s.score}</span>${addFriendHtml}</div>`;
+  }).join('');
+  // Wire add friend buttons in game over popup
+  document.querySelectorAll('.gameover-add-friend-btn').forEach(btn => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      addFriend(btn.dataset.fname, btn.dataset.favatar);
+      btn.textContent = '✅ Added';
+      btn.disabled = true;
+    };
+  });
   openPopup('gameover');
   // HISTORY DETAILS: Save rich history data with all player scores
   const hi = {
@@ -1291,6 +1391,13 @@ socket.on('game-over', ({ winner, scores, packName, totalRounds }) => {
       prof.opponents[s.name] = (prof.opponents[s.name] || 0) + 1;
       // ─── FRIEND LEVEL TRACKING ───
       updateFriendData(s.name);
+      // ─── FRIEND MATCH TRACKING (Firebase) ───
+      const pid = getPlayerId();
+      const fid = s.name.replace(/[.#$\[\]\/]/g, '_');
+      if (pid) {
+        db.ref('friendMatches/' + pid + '/' + fid + '/matchesPlayed').transaction(c => (c || 0) + 1);
+        db.ref('friendMatches/' + fid + '/' + pid + '/matchesPlayed').transaction(c => (c || 0) + 1);
+      }
     }
   });
   saveProfile(prof);
@@ -1306,7 +1413,7 @@ socket.on('game-over', ({ winner, scores, packName, totalRounds }) => {
   saveTasks(tasks);
   state.usedAnyAdvantage = false;
 
-  // ─── GLOBAL LEADERBOARD UPDATE ───
+  // ─── GLOBAL LEADERBOARD UPDATE (Firebase) ───
   updateGlobalLeaderboard();
   // ─── SYNC PROFILE TO SERVER (World LB) ───
   syncProfileToServer();
@@ -1446,9 +1553,22 @@ function updateLB(scores, results) {
 }
 function updatePL(players) {
   const list = $('#players-popup-list');
-  list.innerHTML = (Array.isArray(players)?players:[]).map(p => `<div class="pl-row" data-pid="${p.id}" data-pname="${escHtml(p.name)}" data-pavatar="${p.avatar}" data-pscore="${p.score}"><span class="lb-avatar">${p.avatar}</span><div class="lb-info"><div class="lb-name">${escHtml(p.name)}</div></div><span class="lb-score">${p.score}</span></div>`).join('');
-  list.querySelectorAll('.pl-row').forEach(row => row.onclick = () => {
-    openPublicProfile(row.dataset.pname, row.dataset.pavatar);
+  list.innerHTML = (Array.isArray(players)?players:[]).map(p => {
+    const isMe = p.id === state.myId;
+    return `<div class="pl-row" data-pid="${p.id}" data-pname="${escHtml(p.name)}" data-pavatar="${p.avatar}" data-pscore="${p.score}">
+      <span class="lb-avatar">${p.avatar}</span>
+      <div class="lb-info"><div class="lb-name">${escHtml(p.name)}${isMe?' (You)':''}</div><div class="lb-score-label">${p.score} pts</div></div>
+      <span class="lb-score">${p.score}</span>
+      ${!isMe ? '<button class="pl-view-btn" data-pname="'+escHtml(p.name)+'" data-pavatar="'+p.avatar+'">👤 View</button>' : ''}
+    </div>`;
+  }).join('');
+  // Only open profile when View button is clicked, NOT on row click
+  list.querySelectorAll('.pl-view-btn').forEach(btn => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      closePopup('players');
+      openPublicProfile(btn.dataset.pname, btn.dataset.pavatar);
+    };
   });
 }
 
@@ -1547,55 +1667,84 @@ function renderFriendsList() {
   if (!entries.length) { container.innerHTML = '<p class="empty-state">Play matches to make friends!</p>'; return; }
   container.innerHTML = entries.map(([name, matches]) => {
     const fl = getFriendLevel(name);
-    return `<div class="friend-row">
+    return `<div class="friend-row" style="cursor:pointer" data-fname="${escHtml(name)}">
       <div class="friend-info"><span class="friend-name">${escHtml(name)}</span>
       <span class="friend-matches">${matches} matches</span></div>
       <span class="friend-level-badge ${fl.cls}">${fl.label}</span>
     </div>`;
   }).join('');
+  // Wire clicks to open friend's profile
+  container.querySelectorAll('.friend-row').forEach(row => {
+    row.onclick = () => {
+      const friendName = row.dataset.fname;
+      if (friendName) openPublicProfile(friendName, '😀');
+    };
+  });
 }
 
-// ─── Global Leaderboard ───
+// ─── Global Leaderboard (Firebase-based) ───
 function updateGlobalLeaderboard() {
-  checkWeeklyReset();
-  const lb = loadGlobalLB();
+  const pid = getPlayerId();
+  if (!pid) return;
   const prof = loadProfile();
-  const me = lb.find(e => e.name === state.playerName);
-  if (me) {
-    me.coins = state.coins; me.wins = prof.wins||0; me.avatar = state.avatar;
-  } else {
-    lb.push({ name: state.playerName, coins: state.coins, wins: prof.wins||0, avatar: state.avatar });
-  }
-  saveGlobalLB(lb);
+  // Store leaderboard entry in Firebase for ALL players to see
+  // Every logged-in player MUST appear
+  db.ref('leaderboard/' + pid).set({
+    name: state.playerName,
+    avatar: state.avatar,
+    points: state.coins,
+    wins: prof.wins || 0,
+    matches: prof.matches || 0,
+    updatedAt: Date.now()
+  }).catch(() => {});
 }
 
 function renderGlobalLB() {
-  checkWeeklyReset();
   updateGlobalLeaderboard();
-  const lb = loadGlobalLB().sort((a,b) => b.coins - a.coins);
   const list = $('#global-lb-list');
+  list.innerHTML = '<p class="empty-state">Loading leaderboard…</p>';
   // Reset timer display
   const weekStart = getWeekStart();
   const nextReset = weekStart + 7*24*60*60*1000;
   const daysLeft = Math.max(0, Math.ceil((nextReset - Date.now())/(24*60*60*1000)));
   $('#global-lb-reset').textContent = `Resets in ${daysLeft} day${daysLeft!==1?'s':''}`;
-  if (lb.length === 0) {
-    list.innerHTML = '<p class="empty-state">No players yet. Play to join!</p>';
-    return;
-  }
-  list.innerHTML = lb.slice(0,20).map((p,i) => {
-    const rank = getRankInfo(p.coins, p.wins);
-    const isMe = p.name === state.playerName;
-    const top3 = i < 3;
-    return `<div class="glb-row${isMe?' glb-me':''}${top3?' glb-top3':''}">
-      <span class="glb-rank" style="color:${i===0?'#ffd700':i===1?'#c0c0c0':i===2?'#cd7f32':'var(--text3)'}">#${i+1}</span>
-      <span class="glb-avatar">${p.avatar||'😀'}</span>
-      <div class="glb-info"><div class="glb-name">${escHtml(p.name)}${isMe?' (You)':''}</div>
-      <div class="glb-rank-label" style="color:${rank.cls==='rank-legend'?'#ff6b6b':rank.cls==='rank-gold'?'#ffd700':rank.cls==='rank-silver'?'#c0c0c0':'#cd7f32'}">${rank.label}</div></div>
-      <span class="glb-coins">${p.coins} 💰</span>
-      <span class="glb-wins">${p.wins}W</span>
-    </div>`;
-  }).join('');
+
+  const pid = getPlayerId();
+
+  // Fetch ALL players from Firebase leaderboard + friend match data
+  Promise.all([
+    db.ref('leaderboard').orderByChild('points').once('value'),
+    pid ? db.ref('friendMatches/' + pid).once('value') : Promise.resolve(null)
+  ]).then(([snap, fmSnap]) => {
+    const data = snap.val();
+    if (!data) { list.innerHTML = '<p class="empty-state">No players yet. Play to join!</p>'; return; }
+    const friendMatches = fmSnap ? (fmSnap.val() || {}) : {};
+    const lb = Object.entries(data).map(([id, p]) => ({ ...p, odid: id })).sort((a,b) => (b.points||0) - (a.points||0));
+    if (lb.length === 0) { list.innerHTML = '<p class="empty-state">No players yet. Play to join!</p>'; return; }
+    list.innerHTML = lb.slice(0,50).map((p,i) => {
+      const rank = getRankInfo(p.points||0, p.wins||0);
+      const isMe = p.name === state.playerName;
+      const top3 = i < 3;
+      // Show friend match count if played together
+      const fid = (p.name || '').replace(/[.#$\[\]\/]/g, '_');
+      const fm = friendMatches[fid];
+      const matchesTogether = fm ? (fm.matchesPlayed || 0) : 0;
+      const friendTag = (!isMe && matchesTogether > 0) ? `<span class="glb-friend-tag">🤝 ${matchesTogether} games</span>` : '';
+      return `<div class="glb-row${isMe?' glb-me':''}${top3?' glb-top3':''}" style="cursor:pointer" data-gname="${escHtml(p.name)}" data-gavatar="${p.avatar||'😀'}">
+        <span class="glb-rank" style="color:${i===0?'#ffd700':i===1?'#c0c0c0':i===2?'#cd7f32':'var(--text3)'}">#${i+1}</span>
+        <span class="glb-avatar">${p.avatar||'😀'}</span>
+        <div class="glb-info"><div class="glb-name">${escHtml(p.name)}${isMe?' (You)':''}</div>
+        <div class="glb-rank-label" style="color:${rank.cls==='rank-legend'?'#ff6b6b':rank.cls==='rank-gold'?'#ffd700':rank.cls==='rank-silver'?'#c0c0c0':'#cd7f32'}">${rank.label}</div>
+        ${friendTag}</div>
+        <span class="glb-coins">${p.points||0} 💰</span>
+        <span class="glb-wins">${p.wins||0}W</span>
+      </div>`;
+    }).join('');
+    // Click to open profile
+    list.querySelectorAll('.glb-row').forEach(row => row.onclick = () => {
+      openPublicProfile(row.dataset.gname, row.dataset.gavatar);
+    });
+  }).catch(() => { list.innerHTML = '<p class="empty-state">Error loading leaderboard</p>'; });
 }
 
 // ─── Secret Tasks ───
@@ -1740,7 +1889,7 @@ function renderQuestionPacks() {
       const alreadyLocal = custom.some(cp => cp.serverPackId === id);
       if (alreadyLocal) return; // Skip if already shown as local pack
       let actionHtml = '';
-      if (isMine) actionHtml = '<span class="qp-owned-badge">✨ Your Pack</span>';
+      if (isMine) actionHtml = '<span class="qp-owned-badge">✨ Your Pack</span><button class="qp-delete-btn-firebase" data-fpid="' + id + '" style="margin-left:8px">🗑 Delete</button>';
       else if (isOwned) actionHtml = '<span class="qp-owned-badge">✅ Owned</span>';
       else actionHtml = `<button class="qp-buy-btn-firebase" data-fpid="${id}" ${state.coins < (p.price || 50) ? 'disabled' : ''}>🔓 Buy (${p.price || 50} 💰)</button>`;
       h += `<div class="qp-card${isOwned?' qp-owned':''}">
@@ -1766,6 +1915,12 @@ function renderQuestionPacks() {
       price: packData.price || 50,
       buyers: packData.buyers || {}
     });
+  });
+  // Wire Firebase DELETE buttons (only for creator)
+  list.querySelectorAll('.qp-delete-btn-firebase').forEach(b => b.onclick = (e) => {
+    e.stopPropagation();
+    const fpid = b.dataset.fpid;
+    deleteFirebasePack(fpid);
   });
   console.log('[Packs] Rendered', fbEntries.length, 'Firebase packs +', custom.length, 'local packs');
 }
@@ -1898,7 +2053,7 @@ function displayMarketplacePacks(packsObj) {
     const buyerNames = Object.keys(p.buyers || {});
     const isOwned = buyerNames.includes(state.playerName) || isMine;
     let actionHtml = '';
-    if (isMine) actionHtml = '<span class="mp-owned-badge">✨ Your Pack</span>';
+    if (isMine) actionHtml = '<span class="mp-owned-badge">✨ Your Pack</span><button class="mp-delete-btn" data-pid="' + p.id + '" style="margin-left:8px">🗑 Delete</button>';
     else if (isOwned) actionHtml = '<span class="mp-owned-badge">✅ Owned</span>';
     else actionHtml = `<button class="mp-buy-btn" data-pid="${p.id}" ${state.coins < p.price ? 'disabled' : ''}>🔓 Buy (${p.price} 💰)</button>`;
     return `<div class="marketplace-pack-card">
@@ -1916,6 +2071,11 @@ function displayMarketplacePacks(packsObj) {
     if (!pack) return;
     firebaseBuyPack(pid, pack);
   });
+  // Wire delete buttons (marketplace)
+  list.querySelectorAll('.mp-delete-btn').forEach(b => b.onclick = (e) => {
+    e.stopPropagation();
+    deleteFirebasePack(b.dataset.pid);
+  });
 }
 
 // ─── Buy Pack via Firebase ───
@@ -1928,13 +2088,32 @@ function firebaseBuyPack(packId, packData) {
   if (buyerNames.includes(state.playerName)) return showToast('Already owned!');
   if (packData.creator === state.playerName) return showToast('You created this pack!');
 
-  // Deduct coins locally
+  // ═══ STEP 1: Deduct coins from BUYER locally FIRST (validates balance) ═══
   if (!spendCoins(packData.price)) return showToast('Not enough coins!');
 
-  // ═══ FIREBASE: Record buyer on the pack ═══
+  // ═══ STEP 2: Deduct coins from BUYER in Firebase using TRANSACTION ═══
+  const buyerId = getPlayerId();
+  db.ref('players/' + buyerId + '/coins').transaction(coins => {
+    if (coins === null) return 0;
+    return Math.max(0, (coins || 0) - packData.price);
+  });
+
+  // ═══ STEP 3: Add coins to CREATOR using TRANSACTION (CRITICAL FIX) ═══
+  const creatorId = (packData.creator || '').replace(/[.#$\[\]\/]/g, '_');
+  if (creatorId) {
+    db.ref('players/' + creatorId + '/coins').transaction(coins => {
+      return (coins || 0) + packData.price;
+    }).then(() => {
+      console.log('[Firebase] Creator ' + creatorId + ' received +' + packData.price + ' coins');
+    }).catch(err => {
+      console.error('[Firebase] Creator coin update failed:', err);
+    });
+  }
+
+  // ═══ STEP 4: Record buyer on the pack ═══
   db.ref(`packs/${packId}/buyers/${state.playerName}`).set(true);
 
-  // ═══ FIREBASE: Record purchase ═══
+  // ═══ STEP 5: Record purchase for earnings tracking ═══
   db.ref('purchases').push({
     buyer: state.playerName,
     creator: packData.creator,
@@ -1953,6 +2132,38 @@ function firebaseBuyPack(packId, packData) {
   spawnCoinRain();
   refreshPackSelector();
   // Marketplace auto-updates via Firebase listener
+}
+
+// ─── DELETE Pack from Firebase (creator only, permanent) ───
+function deleteFirebasePack(packId) {
+  const packData = _firebasePacksCache[packId];
+  if (!packData) return showToast('❌ Pack not found');
+  if (packData.creator !== state.playerName) return showToast('❌ Only the creator can delete this pack!');
+
+  showConfirmModal({
+    icon: '🗑',
+    title: 'Delete Pack Permanently?',
+    message: 'This pack will be removed for ALL users. This cannot be undone.',
+    yesText: 'Delete',
+    noText: 'Cancel',
+    onYes: () => {
+      db.ref('packs/' + packId).remove().then(() => {
+        showToast('✅ Pack deleted permanently!', 3000);
+        const localPacks = loadCustomPacks();
+        const filtered = localPacks.filter(p => p.serverPackId !== packId);
+        saveCustomPacks(filtered);
+        refreshPackSelector();
+        db.ref('purchases').orderByChild('packId').equalTo(packId).once('value').then(snap => {
+          const purchases = snap.val();
+          if (purchases) {
+            Object.keys(purchases).forEach(key => db.ref('purchases/' + key).remove());
+          }
+        });
+      }).catch(err => {
+        showToast('❌ Failed to delete: ' + err.message);
+      });
+    }
+  });
 }
 
 function refreshPackSelector() {
@@ -2014,7 +2225,9 @@ const SOUND_PACKS = [
   { id: 'default', name: '🎵 Default Sounds', desc: 'Basic game sounds', price: 0, sounds: ['Beep','Ding','Buzz'], owned: true },
   { id: 'funny', name: '😂 Funny Sounds', desc: 'Hilarious sound effects for every moment', price: 30, sounds: ['Boing','Slide Whistle','Honk'] },
   { id: 'victory', name: '🎉 Victory Music', desc: 'Epic victory fanfares and celebrations', price: 50, sounds: ['Fanfare','Confetti','Triumph'] },
-  { id: 'troll', name: '😈 Troll Sounds', desc: 'Maximum trolling potential', price: 40, sounds: ['Sad Trombone','Bruh','Oof'] }
+  { id: 'troll', name: '😈 Troll Sounds', desc: 'Maximum trolling potential', price: 40, sounds: ['Sad Trombone','Bruh','Oof'] },
+  { id: 'clap', name: '👏 Clap Sounds', desc: 'Satisfying clap effects for every win', price: 35, sounds: ['Single Clap','Slow Clap','Crowd Applause'] },
+  { id: 'laugh', name: '😂 Laugh Track', desc: 'Funny laugh effects for hilarious moments', price: 45, sounds: ['Giggle','Belly Laugh','Crowd Laugh'] }
 ];
 function loadSoundPacks() { return JSON.parse(localStorage.getItem('ms-sound-packs') || '{"owned":["default"],"active":"default"}'); }
 function saveSoundPacks(d) { localStorage.setItem('ms-sound-packs', JSON.stringify(d)); }
@@ -2076,6 +2289,28 @@ function previewSoundPack(packId) {
     // "Oof" bass hit
     tone(80, 0.4, 'square', 0.1, 0.9);
     tone(60, 0.3, 'sawtooth', 0.08, 1.0);
+  } else if (packId === 'clap') {
+    // Clap sequence
+    [800,900,1000].forEach((f, i) => {
+      tone(f, 0.08, 'sine', 0.15, i * 0.08);
+    });
+    // Double clap
+    [800,900,1000,1100].forEach((f, i) => {
+      tone(f, 0.06, 'sine', 0.12, 0.3 + i * 0.06);
+    });
+    // Applause
+    for (let i = 0; i < 8; i++) {
+      tone(600 + Math.random() * 600, 0.08, 'sine', 0.1, 0.6 + i * 0.06);
+    }
+  } else if (packId === 'laugh') {
+    // Giggle ascending
+    [300, 350, 400, 500, 600, 700, 800].forEach((f, i) => {
+      tone(f, 0.1, 'sine', 0.1, i * 0.07);
+    });
+    // Ha-ha-ha
+    [400, 500, 400, 500, 400].forEach((f, i) => {
+      tone(f, 0.08, 'triangle', 0.08, 0.6 + i * 0.1);
+    });
   }
 
   // Auto-close audio context after preview finishes
@@ -2154,27 +2389,34 @@ function renderShopItems() {
     { key: 'reveal', icon: '👀', name: 'Reveal Answer', desc: 'See the full answer during guessing phase', cost: ADV_COST.reveal, count: inv.reveal || 0 },
     { key: 'letterHint', icon: '🔍', name: 'Show 2 Letters', desc: 'Reveals the first 2 letters of the answer', cost: ADV_COST.letterHint, count: inv.letterHint || 0 },
     { key: 'skip', icon: '⏭️', name: 'Skip Question', desc: "Skip your turn when you can't think of a question", cost: ADV_COST.skip, count: inv.skip || 0 },
-    { key: 'double', icon: '✨', name: 'Double Score', desc: 'Double the coins earned from your next correct guess', cost: ADV_COST.double, count: inv.double || 0 }
+    { key: 'double', icon: '✨', name: 'Double Score', desc: 'Double the coins earned from your next correct guess', cost: ADV_COST.double, count: inv.double || 0 },
+    { key: 'freeze', icon: '⏳❄️', name: 'Freeze Timer', desc: 'Pause the timer for 5 extra seconds to think', cost: ADV_COST.freeze, count: inv.freeze || 0 },
+    { key: 'autoHint', icon: '💡', name: 'Auto Hint', desc: 'Automatically reveal 2 correct letters of the answer', cost: ADV_COST.autoHint, count: inv.autoHint || 0 }
   ];
   container.innerHTML = items.map(item => `
-    <div class="shop-item">
-      <div class="shop-item-icon">${item.icon}</div>
-      <div class="shop-item-info">
-        <div class="shop-item-name">${item.name}</div>
-        <div class="shop-item-desc">${item.desc}</div>
-        <div class="shop-item-stock">Owned: <strong>${item.count}</strong></div>
+    <div class="shop-adv-card">
+      <div class="shop-adv-header">
+        <div class="shop-adv-icon">${item.icon}</div>
+        <div class="shop-adv-title">
+          <div class="shop-adv-name">${item.name}</div>
+          <div class="shop-adv-cost">${item.cost} 💰</div>
+        </div>
       </div>
-      <button class="shop-buy-btn" data-key="${item.key}" ${state.coins < item.cost ? 'disabled' : ''}>
-        ${item.cost} 💰
-      </button>
+      <div class="shop-adv-desc">${item.desc}</div>
+      <div class="shop-adv-footer">
+        <div class="shop-adv-owned">${item.count > 0 ? '✅ Owned: <strong>' + item.count + '</strong>' : '🔒 Not owned'}</div>
+        <button class="shop-adv-buy-btn" data-key="${item.key}" ${state.coins < item.cost ? 'disabled' : ''}>
+          Buy
+        </button>
+      </div>
     </div>
   `).join('');
   // Wire buy buttons
-  container.querySelectorAll('.shop-buy-btn').forEach(btn => {
+  container.querySelectorAll('.shop-adv-buy-btn').forEach(btn => {
     btn.onclick = () => {
       const key = btn.dataset.key;
       if (buyInventoryItem(key)) {
-        const names = {reveal:'Reveals',letterHint:'Letter Hints',skip:'Skip Turns',double:'Double Scores'};
+        const names = {reveal:'Reveals',letterHint:'Letter Hints',skip:'Skip Turns',double:'Double Scores',freeze:'Freeze Timers',autoHint:'Auto Hints'};
         showToast(`✅ Purchased! You now have ${getInventoryCount(key)} ${names[key]||key}`);
         spawnCoinRain();
         renderShopItems();
@@ -2205,6 +2447,14 @@ function playSoundPack(type) {
     if(type==='correct'){tone(880,.1);setTimeout(()=>tone(1100,.12),80)}
     else if(type==='wrong'){[400,350,300,250,200].forEach((f,i)=>setTimeout(()=>tone(f,.15,'sawtooth',.1),i*120))}
     else if(type==='win'){tone(523,.15);setTimeout(()=>tone(659,.15),150);setTimeout(()=>tone(784,.2),300);setTimeout(()=>tone(1047,.3),500)}
+  } else if (spData.active === 'clap') {
+    if(type==='correct'){[800,900,1000].forEach((f,i)=>setTimeout(()=>tone(f,.08,'sine',.15),i*80));setTimeout(()=>{[800,900,1000,1100].forEach((f,i)=>setTimeout(()=>tone(f,.06,'sine',.12),i*60))},300)}
+    else if(type==='wrong'){tone(200,.2,'triangle',.08)}
+    else if(type==='win'){for(let i=0;i<8;i++){setTimeout(()=>{tone(600+Math.random()*600,.08,'sine',.12+Math.random()*.05)},i*80)}setTimeout(()=>{[523,659,784,1047].forEach((f,j)=>setTimeout(()=>tone(f,.15,'sine',.1),j*100))},700)}
+  } else if (spData.active === 'laugh') {
+    if(type==='correct'){[300,350,400,500,600,700,800].forEach((f,i)=>setTimeout(()=>tone(f,.1,'sine',.1),i*60))}
+    else if(type==='wrong'){[500,400,300,200].forEach((f,i)=>setTimeout(()=>tone(f,.15,'sawtooth',.08),i*100))}
+    else if(type==='win'){[200,300,250,350,300,400,350,500,600,700,800,900].forEach((f,i)=>setTimeout(()=>tone(f,.1,'sine',.1),i*70))}
   } else { sfx(type === 'win' ? 'winner' : type); }
 }
 
@@ -2256,6 +2506,9 @@ function openPublicProfile(name, avatar) {
   // Hide social buttons if viewing self
   const socialDiv = $('#pub-social-actions');
   if (socialDiv) socialDiv.style.display = (name === state.playerName) ? 'none' : 'flex';
+  // ALWAYS hide Send Coins from public profile popup — only allow from Friends tab
+  const sendCoinsBtn = $('#btn-send-coins');
+  if (sendCoinsBtn) sendCoinsBtn.style.display = 'none';
   // Reset add friend button
   const addBtn = $('#btn-add-friend');
   if (addBtn) { addBtn.textContent = '🧑‍🤝‍🧑 Add Friend'; addBtn.classList.remove('already-friend'); }
@@ -2333,12 +2586,21 @@ function addFriend(friendName, friendAvatar) {
   });
 }
 
-function removeFriend(friendId) {
-  const pid = getPlayerId();
-  db.ref('friends/' + pid + '/' + friendId).remove();
-  db.ref('friends/' + friendId + '/' + pid).remove();
-  showToast('Friend removed');
-  renderFriendsPanel();
+function removeFriend(friendId, friendName) {
+  showConfirmModal({
+    icon: '❌',
+    title: 'Remove Friend?',
+    message: `Are you sure you want to remove ${friendName || 'this friend'}?`,
+    yesText: 'Yes, Remove',
+    noText: 'No, Keep',
+    onYes: () => {
+      const pid = getPlayerId();
+      db.ref('friends/' + pid + '/' + friendId).remove();
+      db.ref('friends/' + friendId + '/' + pid).remove();
+      showToast('✅ Friend removed');
+      renderFriendsPanel();
+    }
+  });
 }
 
 function renderFriendsPanel() {
@@ -2384,7 +2646,7 @@ function renderFriendsPanel() {
           </div>
           <div class="friend-card-actions">
             <button class="friend-send-btn" data-fid="${f.id}" data-fname="${escHtml(f.name)}" title="Send Coins">\ud83d\udcb0</button>
-            <button class="friend-remove-btn" data-fid="${f.id}" title="Remove">\u274c</button>
+            <button class="friend-remove-btn" data-fid="${f.id}" data-fname="${escHtml(f.name)}" title="Remove">\u274c</button>
           </div>
         </div>`;
       }).join('');
@@ -2393,7 +2655,7 @@ function renderFriendsPanel() {
         btn.onclick = (e) => { e.stopPropagation(); sendCoinsToFriend(btn.dataset.fid, btn.dataset.fname); };
       });
       list.querySelectorAll('.friend-remove-btn').forEach(btn => {
-        btn.onclick = (e) => { e.stopPropagation(); removeFriend(btn.dataset.fid); };
+        btn.onclick = (e) => { e.stopPropagation(); removeFriend(btn.dataset.fid, btn.dataset.fname); };
       });
       list.querySelectorAll('.friend-card').forEach(card => {
         card.onclick = () => openPublicProfile(card.dataset.fname, card.dataset.favatar);
