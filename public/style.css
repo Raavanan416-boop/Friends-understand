@@ -462,7 +462,6 @@ body{background:linear-gradient(135deg,#0b0b2a 0%,#1a1040 40%,#0d2137 70%,#1a0a3
   .answer-compare-row{flex-direction:column;gap:10px}
   .compare-vs{min-width:auto;font-size:12px;padding:2px 0}
   .compare-card-value{font-size:17px}
-  .advantage-bar{flex-direction:column;gap:6px}
 }
 @media(max-width:360px){
   .toggle-btn{min-width:48px;padding:10px 4px;font-size:13px}
@@ -496,17 +495,25 @@ body{background:linear-gradient(135deg,#0b0b2a 0%,#1a1040 40%,#0d2137 70%,#1a0a3
 .shop-item-name{font-weight:700;font-size:14px}
 .shop-item-desc{font-size:12px;color:var(--text3);margin-top:2px}
 .shop-item-cost{padding:4px 10px;border-radius:20px;font-size:12px;font-weight:700;background:rgba(254,202,87,.12);color:var(--warning);border:1px solid rgba(254,202,87,.2);white-space:nowrap}
+.shop-item-stock{font-size:11px;color:var(--success);margin-top:3px;font-weight:700}
+.shop-buy-btn{padding:8px 16px;border:none;border-radius:var(--radius-sm);background:linear-gradient(135deg,var(--primary),var(--pink));color:#fff;font-family:var(--font);font-size:13px;font-weight:700;cursor:pointer;transition:.25s;white-space:nowrap;flex-shrink:0;box-shadow:0 4px 12px rgba(108,92,231,.25)}
+.shop-buy-btn:hover{transform:translateY(-1px);box-shadow:0 6px 18px rgba(108,92,231,.4)}
+.shop-buy-btn:active{transform:scale(.97)}
+.shop-buy-btn:disabled{opacity:.4;cursor:not-allowed;transform:none;box-shadow:none}
 .shop-note{text-align:center;font-size:12px;color:var(--text3);margin-top:8px}
 
 /* ═══ ADVANTAGE BUTTONS (in-game) ═══ */
-.advantage-bar{display:flex;gap:8px;width:100%;max-width:420px;margin-top:4px;flex-wrap:wrap;justify-content:center}
-.advantage-btn{display:flex;align-items:center;gap:6px;padding:8px 14px;border:1.5px solid rgba(254,202,87,.25);border-radius:50px;background:linear-gradient(135deg,rgba(254,202,87,.08),rgba(255,165,0,.04));color:var(--warning);font-family:var(--font);font-size:12px;font-weight:700;cursor:pointer;transition:.25s;white-space:nowrap}
+.advantage-bar{display:flex;flex-direction:column;gap:8px;width:100%;max-width:420px;margin-top:4px;align-items:stretch}
+.advantage-btn{display:flex;align-items:center;justify-content:center;gap:6px;padding:10px 14px;border:1.5px solid rgba(254,202,87,.25);border-radius:var(--radius-sm);background:linear-gradient(135deg,rgba(254,202,87,.08),rgba(255,165,0,.04));color:var(--warning);font-family:var(--font);font-size:13px;font-weight:700;cursor:pointer;transition:.25s;white-space:nowrap;width:100%}
 .advantage-btn:hover:not(:disabled){background:linear-gradient(135deg,rgba(254,202,87,.2),rgba(255,165,0,.1));border-color:rgba(254,202,87,.5);transform:translateY(-1px);box-shadow:0 4px 15px rgba(254,202,87,.2)}
-.advantage-btn:active:not(:disabled){transform:scale(.95)}
+.advantage-btn:active:not(:disabled){transform:scale(.97)}
 .advantage-btn:disabled{opacity:.35;cursor:not-allowed;filter:grayscale(.5)}
 .advantage-btn .adv-icon{font-size:16px}
-.advantage-btn .adv-cost{font-size:10px;opacity:.7}
+.advantage-btn .adv-cost{font-size:11px;opacity:.7}
 .advantage-btn.used{border-color:rgba(0,206,201,.4);background:rgba(0,206,201,.1);color:var(--success)}
+
+/* Shop hint message in game */
+.shop-hint-msg{text-align:center;font-size:12px;color:var(--text3);font-weight:600;padding:8px 16px;border-radius:var(--radius-sm);background:rgba(254,202,87,.06);border:1px dashed rgba(254,202,87,.2);margin-top:4px;max-width:420px;width:100%}
 
 /* Revealed answer highlight */
 .revealed-answer-hint{margin-top:8px;padding:10px 16px;border-radius:var(--radius-sm);background:linear-gradient(135deg,rgba(0,206,201,.12),rgba(108,92,231,.08));border:1.5px solid rgba(0,206,201,.35);text-align:center;animation:hintRevealIn .5s cubic-bezier(.22,1,.36,1)}
@@ -649,11 +656,11 @@ body{background:linear-gradient(135deg,#0b0b2a 0%,#1a1040 40%,#0d2137 70%,#1a0a3
 .sp-select-btn{background:rgba(0,206,201,.12);color:var(--success);border:1.5px solid rgba(0,206,201,.25)}
 .sp-select-btn:hover{background:rgba(0,206,201,.2)}
 .sp-selected-btn{background:var(--success);color:#fff;cursor:default}
-.sp-action-row{display:flex;gap:8px;align-items:stretch}
-.sp-preview-btn{flex:0 0 auto;background:linear-gradient(135deg,rgba(254,202,87,.12),rgba(255,165,0,.06));color:var(--warning);border:1.5px solid rgba(254,202,87,.25);border-radius:var(--radius-sm);padding:10px 16px;font-family:var(--font);font-size:13px;font-weight:700;cursor:pointer;transition:.25s;white-space:nowrap}
+.sp-card-actions{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.sp-card-actions .sp-action-btn{width:100%}
+.sp-preview-btn{background:linear-gradient(135deg,rgba(254,202,87,.12),rgba(255,165,0,.06));color:var(--warning);border:1.5px solid rgba(254,202,87,.25);border-radius:var(--radius-sm);padding:10px 16px;font-family:var(--font);font-size:13px;font-weight:700;cursor:pointer;transition:.25s;white-space:nowrap;width:100%}
 .sp-preview-btn:hover{background:linear-gradient(135deg,rgba(254,202,87,.25),rgba(255,165,0,.12));border-color:rgba(254,202,87,.5);transform:translateY(-1px);box-shadow:0 4px 15px rgba(254,202,87,.2)}
 .sp-preview-btn:active{transform:scale(.95)}
-.sp-action-row .sp-action-btn:not(.sp-preview-btn){flex:1}
 
 /* ═══ WORLD LEADERBOARD PANEL ═══ */
 .world-lb-list{display:flex;flex-direction:column;gap:7px;max-height:500px;overflow-y:auto}
@@ -787,4 +794,43 @@ body{background:linear-gradient(135deg,#0b0b2a 0%,#1a1040 40%,#0d2137 70%,#1a0a3
 .qp-buy-btn-firebase:hover{transform:translateY(-1px);box-shadow:0 6px 20px rgba(108,92,231,.4)}
 .qp-buy-btn-firebase:active{transform:scale(.97)}
 .qp-buy-btn-firebase:disabled{opacity:.4;cursor:not-allowed;transform:none;box-shadow:none}
+
+/* ═══ FRIENDS PANEL ═══ */
+.friends-header-bar{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+.friends-online-badge{padding:6px 14px;border-radius:50px;font-size:12px;font-weight:700;background:rgba(0,206,201,.1);color:var(--success);border:1px solid rgba(0,206,201,.25);letter-spacing:.5px}
+.friends-list-panel{display:flex;flex-direction:column;gap:10px;max-height:500px;overflow-y:auto}
+.friend-card{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-radius:var(--radius-sm);background:var(--surface);border:1px solid var(--glass-border);transition:.25s;cursor:pointer}
+.friend-card:hover{background:rgba(108,92,231,.08);border-color:rgba(108,92,231,.2);transform:translateY(-1px)}
+.friend-card-left{display:flex;align-items:center;gap:12px;flex:1;min-width:0}
+.friend-card-avatar{font-size:32px;flex-shrink:0}
+.friend-card-info{flex:1;min-width:0}
+.friend-card-name{font-weight:700;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.friend-card-status{font-size:11px;font-weight:600;margin-top:2px}
+.friend-card-status.status-online{color:var(--success)}
+.friend-card-status.status-ingame{color:var(--warning)}
+.friend-card-status.status-offline{color:var(--text3)}
+.friend-card-actions{display:flex;gap:6px;flex-shrink:0}
+.friend-send-btn,.friend-remove-btn{width:36px;height:36px;border:1px solid var(--glass-border);border-radius:10px;background:var(--surface);font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:.2s;padding:0;line-height:1}
+.friend-send-btn:hover{background:rgba(254,202,87,.15);border-color:rgba(254,202,87,.3);transform:scale(1.1)}
+.friend-remove-btn:hover{background:rgba(255,107,107,.15);border-color:rgba(255,107,107,.3);transform:scale(1.1)}
+
+/* ═══ PUBLIC PROFILE SOCIAL ACTIONS ═══ */
+.pub-online-status{text-align:center;margin-bottom:10px;font-size:12px;font-weight:700}
+.pub-online-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:middle}
+.pub-online-dot.dot-online{background:var(--success);box-shadow:0 0 8px rgba(0,206,201,.5)}
+.pub-online-dot.dot-ingame{background:var(--warning);box-shadow:0 0 8px rgba(254,202,87,.5)}
+.pub-online-dot.dot-offline{background:var(--text3)}
+.pub-social-actions{display:flex;flex-direction:column;gap:8px;margin:12px 0 8px}
+.pub-action-btn{width:100%;padding:10px;border:none;border-radius:var(--radius-sm);font-family:var(--font);font-size:13px;font-weight:700;cursor:pointer;transition:.25s}
+.pub-add-friend{background:linear-gradient(135deg,rgba(108,92,231,.15),rgba(253,121,168,.1));color:var(--accent);border:1.5px solid rgba(108,92,231,.3)}
+.pub-add-friend:hover{background:linear-gradient(135deg,rgba(108,92,231,.25),rgba(253,121,168,.15));transform:translateY(-1px)}
+.pub-add-friend.already-friend{background:rgba(0,206,201,.1);color:var(--success);border-color:rgba(0,206,201,.25);cursor:default}
+.pub-send-coins{background:linear-gradient(135deg,rgba(254,202,87,.12),rgba(255,165,0,.06));color:var(--warning);border:1.5px solid rgba(254,202,87,.25)}
+.pub-send-coins:hover{background:linear-gradient(135deg,rgba(254,202,87,.25),rgba(255,165,0,.12));transform:translateY(-1px)}
+.pub-send-coins:disabled{opacity:.4;cursor:not-allowed;transform:none}
+
+/* ═══ ADVANTAGE: SKIP TURN BUTTON ═══ */
+.skip-turn-btn{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;max-width:420px;padding:10px 14px;border:1.5px solid rgba(255,107,107,.25);border-radius:var(--radius-sm);background:linear-gradient(135deg,rgba(255,107,107,.08),rgba(255,107,107,.04));color:var(--danger);font-family:var(--font);font-size:13px;font-weight:700;cursor:pointer;transition:.25s;margin-top:4px}
+.skip-turn-btn:hover:not(:disabled){background:linear-gradient(135deg,rgba(255,107,107,.18),rgba(255,107,107,.1));border-color:rgba(255,107,107,.5);transform:translateY(-1px)}
+.skip-turn-btn:disabled{opacity:.35;cursor:not-allowed}
 

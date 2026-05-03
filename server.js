@@ -350,6 +350,19 @@ io.on('connection', (socket) => {
     socket.emit('letter-hint', { hint: masked });
   });
 
+  // ── Use Advantage: Skip Turn (turn player skips their question) ──
+  socket.on('use-skip-turn', ({ roomCode }) => {
+    const room = rooms[roomCode];
+    if (!room || room.phase !== 'question') return;
+    const activePlayers = getActivePlayers(room);
+    if (activePlayers[room.currentTurnPlayerIndex]?.id !== socket.id) return;
+    clearTimeout(room.timerRef);
+    room.currentQuestion = '(Skipped)';
+    room.currentAnswer = '';
+    io.to(roomCode).emit('turn-skipped', { playerName: activePlayers[room.currentTurnPlayerIndex].name });
+    advanceTurn(roomCode);
+  });
+
   // ── Sync Profile (for World Leaderboard) ──
   socket.on('sync-profile', ({ name, avatar, coins, matches, wins }) => {
     if (!name) return;

@@ -82,6 +82,7 @@
           <button class="dropdown-item" id="btn-question-packs"><span class="dropdown-icon">🎭</span> Question Packs</button>
           <button class="dropdown-item" id="btn-sound-shop"><span class="dropdown-icon">🎧</span> Sound Shop</button>
           <button class="dropdown-item" id="btn-profile"><span class="dropdown-icon">👤</span> Profile</button>
+          <button class="dropdown-item" id="btn-friends"><span class="dropdown-icon">🧑‍🤝‍🧑</span> Friends</button>
           <button class="dropdown-item" id="btn-global-leaderboard"><span class="dropdown-icon">🏆</span> Leaderboard</button>
           <button class="dropdown-item" id="btn-history"><span class="dropdown-icon">⏱</span> History</button>
           <button class="dropdown-item" id="btn-install-topbar" style="display:none"><span class="dropdown-icon">📲</span> Install App</button>
@@ -208,49 +209,10 @@
         <span class="coin-balance-label">coins</span>
       </div>
       <div class="shop-section-title">⚡ Advantages</div>
-      <div class="shop-items">
-        <div class="shop-item">
-          <div class="shop-item-icon">👀</div>
-          <div class="shop-item-info">
-            <div class="shop-item-name">Reveal Answer</div>
-            <div class="shop-item-desc">See the answer before guessing</div>
-          </div>
-          <div class="shop-item-cost">25 💰</div>
-        </div>
-        <div class="shop-item">
-          <div class="shop-item-icon">🔤</div>
-          <div class="shop-item-info">
-            <div class="shop-item-name">Hint Letters</div>
-            <div class="shop-item-desc">Reveal first & last letter</div>
-          </div>
-          <div class="shop-item-cost">15 💰</div>
-        </div>
-        <div class="shop-item">
-          <div class="shop-item-icon">🔍</div>
-          <div class="shop-item-info">
-            <div class="shop-item-name">Letter Hint (NEW!)</div>
-            <div class="shop-item-desc">Show first 2 letters of answer</div>
-          </div>
-          <div class="shop-item-cost">15 💰</div>
-        </div>
-        <div class="shop-item">
-          <div class="shop-item-icon">⏳</div>
-          <div class="shop-item-info">
-            <div class="shop-item-name">Extra Time</div>
-            <div class="shop-item-desc">+15 seconds to guess</div>
-          </div>
-          <div class="shop-item-cost">10 💰</div>
-        </div>
-        <div class="shop-item">
-          <div class="shop-item-icon">✨</div>
-          <div class="shop-item-info">
-            <div class="shop-item-name">Double Points</div>
-            <div class="shop-item-desc">2x points for next correct guess</div>
-          </div>
-          <div class="shop-item-cost">30 💰</div>
-        </div>
+      <div class="shop-items" id="shop-advantage-items">
+        <!-- Dynamically rendered by renderShopItems() -->
       </div>
-      <p class="shop-note">Use advantages during the guessing phase!</p>
+      <p class="shop-note">💡 Buy advantages here, then use them during the game!</p>
     </div>
   </div>
 
@@ -388,6 +350,21 @@
     </div>
   </div>
 
+  <!-- ═══════ FRIENDS PANEL ═══════ -->
+  <div class="slide-panel" id="panel-friends">
+    <div class="panel-overlay"></div>
+    <div class="panel-content glass-card">
+      <div class="panel-handle"></div>
+      <h2 class="panel-title">🧑‍🤝‍🧑 Friends</h2>
+      <div class="friends-header-bar">
+        <div class="friends-online-badge" id="friends-online-count">0 online</div>
+      </div>
+      <div class="friends-list-panel" id="friends-list-panel">
+        <p class="empty-state">No friends yet. Add friends during games!</p>
+      </div>
+    </div>
+  </div>
+
   <!-- ═══════ WORLD LEADERBOARD PANEL ═══════ -->
   <div class="slide-panel" id="panel-world-lb">
     <div class="panel-overlay"></div>
@@ -406,11 +383,16 @@
         <div class="pub-name" id="pub-name">Player</div>
         <div class="pub-friend-level" id="pub-friend-level">😐 Stranger</div>
       </div>
+      <div class="pub-online-status" id="pub-online-status"></div>
       <div class="profile-stats-grid">
         <div class="profile-stat-card"><div class="stat-icon">💰</div><div class="stat-value" id="pub-coins">0</div><div class="stat-label">Coins</div></div>
         <div class="profile-stat-card"><div class="stat-icon">🎮</div><div class="stat-value" id="pub-matches">0</div><div class="stat-label">Matches</div></div>
         <div class="profile-stat-card"><div class="stat-icon">🏆</div><div class="stat-value" id="pub-wins">0</div><div class="stat-label">Wins</div></div>
         <div class="profile-stat-card"><div class="stat-icon">📊</div><div class="stat-value" id="pub-winrate">0%</div><div class="stat-label">Win Rate</div></div>
+      </div>
+      <div class="pub-social-actions" id="pub-social-actions">
+        <button class="pub-action-btn pub-add-friend" id="btn-add-friend">🧑‍🤝‍🧑 Add Friend</button>
+        <button class="pub-action-btn pub-send-coins" id="btn-send-coins">💰 Send 10 Coins</button>
       </div>
       <button class="btn-secondary popup-close-btn" id="btn-close-pub-profile">Close</button>
     </div>

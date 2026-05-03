@@ -1,15 +1,16 @@
 /* ═══ MIND SYNC GAME — Client ═══ */
 
 // ═══ FIREBASE CONFIG — Replace with YOUR Firebase project values ═══
-const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_PROJECT.firebaseapp.com",
-  databaseURL: "https://YOUR_PROJECT-default-rtdb.firebaseio.com",
-  projectId: "YOUR_PROJECT",
-  storageBucket: "YOUR_PROJECT.appspot.com",
-  messagingSenderId: "YOUR_SENDER_ID",
-  appId: "YOUR_APP_ID"
-};
+  const firebaseConfig = {
+    apiKey: "AIzaSyAWWM4L031K2mAjL9_-sQzxxnZfbHJ5dvA",
+    authDomain: "friends-memory-61a51.firebaseapp.com",
+    databaseURL: "https://friends-memory-61a51-default-rtdb.firebaseio.com",
+    projectId: "friends-memory-61a51",
+    storageBucket: "friends-memory-61a51.firebasestorage.app",
+    messagingSenderId: "472312417424",
+    appId: "1:472312417424:web:415266d3fc421ed1751c15",
+    measurementId: "G-RD30LG8CL7"
+  };
 firebase.initializeApp(firebaseConfig);
 const db = firebase.database();
 
@@ -23,8 +24,105 @@ const QUESTION_TIMER_MS = 60000;
 const GUESS_TIMER_MS    = 25000;
 const QUESTION_WARN_SEC = 10;
 const GUESS_WARN_SEC    = 5;
-// Advantage costs
-const ADV_COST = { reveal: 25, hint: 15, extraTime: 10, doublePoints: 30, letterHint: 15 };
+// Advantage costs (SHOP ONLY — buy in shop, use in game)
+const ADV_COST = { reveal: 20, letterHint: 15, skip: 25, double: 30 };
+
+// ─── Inventory System (Buy in Shop → Use in Game) ───
+function loadInventory() {
+  const def = {reveal:0,letterHint:0,skip:0,double:0};
+  const stored = JSON.parse(localStorage.getItem('ms-inventory') || '{}');
+  return {...def, ...stored};
+}
+function saveInventory(inv) {
+  localStorage.setItem('ms-inventory', JSON.stringify(inv));
+  syncPlayerToFirebase(); // auto-sync
+}
+function useInventoryItem(key) {
+  const inv = loadInventory();
+  if (!inv[key] || inv[key] <= 0) return false;
+  inv[key]--;
+  saveInventory(inv);
+  return true;
+}
+function buyInventoryItem(key) {
+  const cost = ADV_COST[key];
+  if (!cost) return false;
+  if (!spendCoins(cost)) return false;
+  const inv = loadInventory();
+  inv[key] = (inv[key] || 0) + 1;
+  saveInventory(inv);
+  return true;
+}
+function getInventoryCount(key) {
+  return loadInventory()[key] || 0;
+}
+
+// ─── Firebase Player ID ───
+function getPlayerId() {
+  if (!state.playerName) return '';
+  return state.playerName.replace(/[.#$\[\]\/]/g, '_');
+}
+
+// ─── Firebase Player Sync ───
+let _syncTimer = null;
+function syncPlayerToFirebase() {
+  // Debounce: batch rapid updates
+  clearTimeout(_syncTimer);
+  _syncTimer = setTimeout(() => {
+    const pid = getPlayerId();
+    if (!pid) return;
+    db.ref('players/' + pid).update({
+      name: state.playerName,
+      avatar: state.avatar,
+      coins: state.coins,
+      inventory: loadInventory(),
+      lastSeen: Date.now()
+    }).catch(() => {});
+  }, 300);
+}
+
+function loadPlayerFromFirebase(callback) {
+  const pid = getPlayerId();
+  if (!pid) { if (callback) callback(); return; }
+  db.ref('players/' + pid).once('value').then(snap => {
+    const data = snap.val();
+    if (data) {
+      if (data.coins !== undefined && data.coins > state.coins) {
+        state.coins = data.coins; saveCoins();
+      }
+      if (data.inventory) {
+        const local = loadInventory();
+        const merged = {};
+        for (const k of ['reveal','letterHint','skip','double']) {
+          merged[k] = Math.max(local[k] || 0, data.inventory[k] || 0);
+        }
+        localStorage.setItem('ms-inventory', JSON.stringify(merged));
+      }
+      updateCoinUI();
+    }
+    if (callback) callback();
+  }).catch(() => { if (callback) callback(); });
+}
+
+// ─── Online Status (Firebase Presence) ───
+function setupOnlineStatus() {
+  const pid = getPlayerId();
+  if (!pid) return;
+  const statusRef = db.ref('players/' + pid + '/status');
+  const connRef = db.ref('.info/connected');
+  connRef.on('value', snap => {
+    if (snap.val() === true) {
+      statusRef.set({ online: true, inGame: false, lastSeen: Date.now() });
+      statusRef.onDisconnect().set({ online: false, inGame: false, lastSeen: Date.now() });
+    }
+  });
+}
+
+function updateGameStatus(playing) {
+  const pid = getPlayerId();
+  if (!pid) return;
+  db.ref('players/' + pid + '/status').update({ inGame: playing, lastSeen: Date.now() }).catch(() => {});
+}
 
 // ─── Profile Data ───
 function loadProfile() {
@@ -85,14 +183,13 @@ let state = {
   hasLeftRoom: false,
   coins: parseInt(localStorage.getItem('ms-coins') || '0'),
   usedReveal: false,
-  usedHint: false,
   usedLetterHint: false,
   usedAnyAdvantage: false,
   doubleNext: false
 };
 
 // ─── Coin Helpers ───
-function saveCoins() { localStorage.setItem('ms-coins', state.coins); }
+function saveCoins() { localStorage.setItem('ms-coins', state.coins); syncPlayerToFirebase(); }
 function addCoins(n) {
   if (n <= 0) return;
   state.coins += n;
@@ -172,6 +269,9 @@ function initUI() {
     showScreen('home'); updateHomeUI(); fetchRooms();
     // Sync profile to server for world leaderboard
     setTimeout(() => syncProfileToServer(), 500);
+    // Load from Firebase & setup online status
+    loadPlayerFromFirebase(() => { updateCoinUI(); });
+    setupOnlineStatus();
     // Daily reward check
     if (canClaimDaily()) setTimeout(() => openPopup('daily-reward'), 800);
   } else { showScreen('login'); }
@@ -190,8 +290,8 @@ function initUI() {
   $('#btn-install-topbar').onclick = installApp;
   $('#btn-save-name').onclick = saveName;
   $('#btn-coin-shop').onclick = () => {
-    if (isInGame) return showToast('🛒 Shop only available in Home screen!');
-    updateCoinUI(); openPanel('coinshop');
+    if (isInGame) return showToast('🛒 Shop only available from Home screen!');
+    updateCoinUI(); renderShopItems(); openPanel('coinshop');
   };
   $('#btn-profile').onclick = () => { renderProfile(); openPanel('profile'); };
   $('#btn-global-leaderboard').onclick = () => { renderGlobalLB(); openPanel('global-lb'); };
@@ -204,7 +304,20 @@ function initUI() {
     if (toggle) toggle.checked = localStorage.getItem('ms-sound-off') !== '1';
   };
   $('#btn-world-lb').onclick = () => { renderWorldLB(); openPanel('world-lb'); };
+  $('#btn-friends').onclick = () => { renderFriendsPanel(); openPanel('friends'); };
   $('#btn-close-pub-profile').onclick = () => closePopup('public-profile');
+  $('#btn-add-friend').onclick = () => {
+    const name = $('#pub-name').textContent;
+    const avatar = $('#pub-avatar').textContent;
+    if (name && name !== state.playerName) addFriend(name, avatar);
+  };
+  $('#btn-send-coins').onclick = () => {
+    const name = $('#pub-name').textContent;
+    if (name && name !== state.playerName) {
+      const fid = name.replace(/[.#$\[\]\/]/g, '_');
+      sendCoinsToFriend(fid, name);
+    }
+  };
   // Question pack tabs
   $$('.qp-tab').forEach(t => t.onclick = () => {
     $$('.qp-tab').forEach(x => x.classList.remove('active')); t.classList.add('active');
@@ -362,7 +475,9 @@ function doLogin() {
   updateHomeUI();
   fetchRooms();
   sfx('click');
-  // Sync profile to server on login
+  // Firebase: load data, setup presence, sync profile
+  loadPlayerFromFirebase(() => { updateCoinUI(); });
+  setupOnlineStatus();
   syncProfileToServer();
 }
 
@@ -593,6 +708,7 @@ function cleanupAndGoHome() {
   state.lastRoomState = null;
   state.hasLeftRoom = true;
   isInGame = false;
+  updateGameStatus(false);
   clearInterval(state.timerInterval);
   closeAllPanels();
   closeAllPopups();
@@ -605,6 +721,7 @@ function goHome() {
   state.lastRoomState = null;
   state.hasLeftRoom = false;
   isInGame = false;
+  updateGameStatus(false);
   clearInterval(state.timerInterval);
   closeAllPanels();
   closeAllPopups();
@@ -646,8 +763,9 @@ function renderGameContent(data) {
   const gc = $('#game-content');
   const isMyTurn = data.players?.[data.currentTurnPlayerIndex]?.id === state.myId;
   const tp = data.turnPlayerName || 'Someone';
-  const isPackMode = data.isPackMode; // Server tells us if pack question is active
+  const isPackMode = data.isPackMode;
   const packQ = data.packQuestion || null;
+  updateGameStatus(true); // Firebase: mark as in game
 
   if (data.phase === 'question') {
     if (isMyTurn) {
@@ -678,7 +796,8 @@ function renderGameContent(data) {
             <input type="text" id="input-question" class="input-field" placeholder="Type your question…" maxlength="120" autocomplete="off">
             <input type="text" id="input-answer" class="input-field" placeholder="The answer…" maxlength="60" autocomplete="off">
             <button class="btn-primary btn-neon" id="btn-submit-qa">Submit</button>
-          </div>`;
+          </div>
+          ${getInventoryCount('skip') > 0 ? `<button class="skip-turn-btn" id="btn-skip-turn">⏭️ Skip Turn (${getInventoryCount('skip')} left)</button>` : ''}`;
         $('#btn-submit-qa').onclick = () => {
           const q = $('#input-question').value.trim();
           const a = $('#input-answer').value.trim();
@@ -686,6 +805,18 @@ function renderGameContent(data) {
           socket.emit('submit-qa', { roomCode: state.roomCode, question: q, answer: a });
           sfx('click');
         };
+        // Wire Skip Turn advantage
+        const skipBtn = $('#btn-skip-turn');
+        if (skipBtn) {
+          skipBtn.onclick = () => {
+            if (!useInventoryItem('skip')) return showToast('❌ No Skip items! Buy from Shop');
+            state.usedAnyAdvantage = true;
+            skipBtn.disabled = true;
+            skipBtn.textContent = '✅ Skipping...';
+            socket.emit('use-skip-turn', { roomCode: state.roomCode });
+            sfx('click');
+          };
+        }
       }
     } else {
       // Non-turn player: show waiting message
@@ -704,8 +835,8 @@ function renderGameContent(data) {
   } else if (data.phase === 'guess') {
     // Reset per-round advantage flags
     state.usedReveal = false;
-    state.usedHint = false;
     state.usedLetterHint = false;
+    state.usedDoubleScore = false;
     if (isMyTurn) {
       gc.innerHTML = `<div class="game-question-display"><div class="q-label">Your Question</div><div class="q-text">${escHtml(data.question)}</div></div>
         <div class="waiting-turn-msg"><span class="wtm-emoji">⏳</span><p>Others are guessing…</p></div>`;
@@ -713,6 +844,15 @@ function renderGameContent(data) {
       // Build masked answer hint
       const ansLen = data.answerLength || 0;
       const maskedChars = ansLen > 0 ? '•'.repeat(Math.min(ansLen, 20)) : '• • • • •';
+      // ═══ INVENTORY-BASED ADVANTAGES (buy in Shop, use in Game) ═══
+      const revealCount = getInventoryCount('reveal');
+      const letterCount = getInventoryCount('letterHint');
+      const doubleCount = getInventoryCount('double');
+      const hasReveal = revealCount > 0;
+      const hasLetter = letterCount > 0;
+      const hasDouble = doubleCount > 0;
+      const hasAny = hasReveal || hasLetter || hasDouble;
+
       gc.innerHTML = `<div class="game-question-display"><div class="q-label">${escHtml(tp)}'s Question</div><div class="q-text">${escHtml(data.question)}</div></div>
         <div class="answer-card-wrapper">
           <div class="answer-card" id="answer-card">
@@ -732,24 +872,25 @@ function renderGameContent(data) {
         </div>
         <div id="advantage-hint-area"></div>
         <div class="advantage-bar" id="advantage-bar">
-          <button class="advantage-btn" id="btn-adv-reveal" ${state.coins < ADV_COST.reveal ? 'disabled' : ''}>
-            <span class="adv-icon">👀</span> Reveal <span class="adv-cost">(${ADV_COST.reveal}💰)</span>
+          <button class="advantage-btn" id="btn-adv-reveal" ${!hasReveal ? 'disabled' : ''}>
+            <span class="adv-icon">👀</span> Reveal Answer <span class="adv-cost">(${revealCount} left)</span>
           </button>
-          <button class="advantage-btn" id="btn-adv-hint" ${state.coins < ADV_COST.hint ? 'disabled' : ''}>
-            <span class="adv-icon">🔤</span> Hint <span class="adv-cost">(${ADV_COST.hint}💰)</span>
+          <button class="advantage-btn" id="btn-adv-letter" ${!hasLetter ? 'disabled' : ''}>
+            <span class="adv-icon">🔍</span> Show 2 Letters <span class="adv-cost">(${letterCount} left)</span>
           </button>
-          <button class="advantage-btn" id="btn-adv-letter" ${state.coins < ADV_COST.letterHint ? 'disabled' : ''}>
-            <span class="adv-icon">🔍</span> 2 Letters <span class="adv-cost">(${ADV_COST.letterHint}💰)</span>
+          <button class="advantage-btn" id="btn-adv-double" ${!hasDouble ? 'disabled' : ''}>
+            <span class="adv-icon">✨</span> Double Score <span class="adv-cost">(${doubleCount} left)</span>
           </button>
         </div>
+        ${!hasAny ? '<div class="shop-hint-msg">🛒 Buy advantages from Shop</div>' : ''}
         <div class="game-input-area">
           <input type="text" id="input-guess" class="input-field" placeholder="Your guess…" maxlength="60" autocomplete="off">
           <button class="btn-primary btn-neon" id="btn-submit-guess">Submit Guess</button>
         </div>`;
-      // Wire advantage buttons
+      // Wire advantage buttons — USE INVENTORY, not coins
       $('#btn-adv-reveal').onclick = () => {
         if (state.usedReveal) return;
-        if (!spendCoins(ADV_COST.reveal)) return showToast('Not enough coins!');
+        if (!useInventoryItem('reveal')) return showToast('❌ No Reveal items! Buy from Shop');
         state.usedReveal = true; state.usedAnyAdvantage = true;
         $('#btn-adv-reveal').disabled = true;
         $('#btn-adv-reveal').classList.add('used');
@@ -757,26 +898,27 @@ function renderGameContent(data) {
         socket.emit('use-reveal', { roomCode: state.roomCode });
         sfx('click');
       };
-      $('#btn-adv-hint').onclick = () => {
-        if (state.usedHint) return;
-        if (!spendCoins(ADV_COST.hint)) return showToast('Not enough coins!');
-        state.usedHint = true; state.usedAnyAdvantage = true;
-        $('#btn-adv-hint').disabled = true;
-        $('#btn-adv-hint').classList.add('used');
-        $('#btn-adv-hint').innerHTML = '<span class="adv-icon">✅</span> Hinted';
-        const area = $('#advantage-hint-area');
-        area.innerHTML = `<div class="revealed-answer-hint"><div class="hint-label">Hint</div><div class="hint-value">${ansLen} letters<br><small style="color:var(--text2);font-size:12px">First & last letter hint</small></div></div>`;
-        sfx('click');
-      };
-      // Letter Hint — reveal first 2 letters
+      // Letter Hint — reveal first 2 letters (uses inventory)
       $('#btn-adv-letter').onclick = () => {
         if (state.usedLetterHint) return;
-        if (!spendCoins(ADV_COST.letterHint)) return showToast('Not enough coins!');
+        if (!useInventoryItem('letterHint')) return showToast('❌ No Letter Hint items! Buy from Shop');
         state.usedLetterHint = true; state.usedAnyAdvantage = true;
         $('#btn-adv-letter').disabled = true;
         $('#btn-adv-letter').classList.add('used');
         $('#btn-adv-letter').innerHTML = '<span class="adv-icon">✅</span> Shown';
         socket.emit('use-letter-hint', { roomCode: state.roomCode });
+        sfx('click');
+      };
+      // Double Score — doubles coins earned for this guess (uses inventory)
+      $('#btn-adv-double').onclick = () => {
+        if (state.usedDoubleScore) return;
+        if (!useInventoryItem('double')) return showToast('\u274c No Double Score items! Buy from Shop');
+        state.usedDoubleScore = true; state.usedAnyAdvantage = true;
+        state.doubleNext = true; // existing scoring logic handles this
+        $('#btn-adv-double').disabled = true;
+        $('#btn-adv-double').classList.add('used');
+        $('#btn-adv-double').innerHTML = '<span class="adv-icon">\u2705</span> 2x Active';
+        showToast('\u2728 Double Score activated! Next correct guess earns 2x!');
         sfx('click');
       };
       $('#btn-submit-guess').onclick = () => {
@@ -1955,16 +2097,25 @@ function renderSoundShop() {
     const owned = spData.owned.includes(p.id);
     const active = spData.active === p.id;
 
-    // Action buttons: Preview always available + Buy/Select/Selected
+    // ═══ FIXED VERTICAL LAYOUT: Preview always on top, action button below ═══
     let actionHtml = '';
-    const previewBtn = `<button class="sp-action-btn sp-preview-btn" data-sp="${p.id}" title="Preview sounds">▶️ Preview</button>`;
-
-    if (active) {
-      actionHtml = `<div class="sp-action-row">${previewBtn}<button class="sp-action-btn sp-selected-btn">✅ Selected</button></div>`;
-    } else if (owned) {
-      actionHtml = `<div class="sp-action-row">${previewBtn}<button class="sp-action-btn sp-select-btn" data-sp="${p.id}">Select</button></div>`;
+    if (!owned) {
+      // NOT OWNED: Only show Unlock button (no preview until owned)
+      actionHtml = `<div class="sp-card-actions">
+        <button class="sp-action-btn sp-buy-btn" data-sp="${p.id}" data-cost="${p.price}" ${state.coins < p.price ? 'disabled' : ''}>🔒 Unlock (${p.price} 💰)</button>
+      </div>`;
+    } else if (active) {
+      // OWNED + SELECTED: Preview on top, Selected below
+      actionHtml = `<div class="sp-card-actions">
+        <button class="sp-action-btn sp-preview-btn" data-sp="${p.id}">▶️ Preview</button>
+        <button class="sp-action-btn sp-selected-btn">✅ Selected</button>
+      </div>`;
     } else {
-      actionHtml = `<div class="sp-action-row">${previewBtn}<button class="sp-action-btn sp-buy-btn" data-sp="${p.id}" data-cost="${p.price}" ${state.coins < p.price ? 'disabled' : ''}>🔓 Unlock (${p.price} 💰)</button></div>`;
+      // OWNED + NOT SELECTED: Preview on top, Select below
+      actionHtml = `<div class="sp-card-actions">
+        <button class="sp-action-btn sp-preview-btn" data-sp="${p.id}">▶️ Preview</button>
+        <button class="sp-action-btn sp-select-btn" data-sp="${p.id}">Select</button>
+      </div>`;
     }
 
     return `<div class="sound-pack-card${active?' sp-active':''}">
@@ -1991,6 +2142,47 @@ function renderSoundShop() {
   list.querySelectorAll('.sp-select-btn').forEach(b => b.onclick = () => {
     const d = loadSoundPacks(); d.active = b.dataset.sp; saveSoundPacks(d);
     showToast('🎧 Sound pack selected!'); renderSoundShop();
+  });
+}
+
+// ─── Shop Items Renderer (Advantages) ───
+function renderShopItems() {
+  const container = $('#shop-advantage-items');
+  if (!container) return;
+  const inv = loadInventory();
+  const items = [
+    { key: 'reveal', icon: '👀', name: 'Reveal Answer', desc: 'See the full answer during guessing phase', cost: ADV_COST.reveal, count: inv.reveal || 0 },
+    { key: 'letterHint', icon: '🔍', name: 'Show 2 Letters', desc: 'Reveals the first 2 letters of the answer', cost: ADV_COST.letterHint, count: inv.letterHint || 0 },
+    { key: 'skip', icon: '⏭️', name: 'Skip Question', desc: "Skip your turn when you can't think of a question", cost: ADV_COST.skip, count: inv.skip || 0 },
+    { key: 'double', icon: '✨', name: 'Double Score', desc: 'Double the coins earned from your next correct guess', cost: ADV_COST.double, count: inv.double || 0 }
+  ];
+  container.innerHTML = items.map(item => `
+    <div class="shop-item">
+      <div class="shop-item-icon">${item.icon}</div>
+      <div class="shop-item-info">
+        <div class="shop-item-name">${item.name}</div>
+        <div class="shop-item-desc">${item.desc}</div>
+        <div class="shop-item-stock">Owned: <strong>${item.count}</strong></div>
+      </div>
+      <button class="shop-buy-btn" data-key="${item.key}" ${state.coins < item.cost ? 'disabled' : ''}>
+        ${item.cost} 💰
+      </button>
+    </div>
+  `).join('');
+  // Wire buy buttons
+  container.querySelectorAll('.shop-buy-btn').forEach(btn => {
+    btn.onclick = () => {
+      const key = btn.dataset.key;
+      if (buyInventoryItem(key)) {
+        const names = {reveal:'Reveals',letterHint:'Letter Hints',skip:'Skip Turns',double:'Double Scores'};
+        showToast(`✅ Purchased! You now have ${getInventoryCount(key)} ${names[key]||key}`);
+        spawnCoinRain();
+        renderShopItems();
+        updateCoinUI();
+      } else {
+        showToast('❌ Not enough coins!');
+      }
+    };
   });
 }
 
@@ -2061,6 +2253,38 @@ function openPublicProfile(name, avatar) {
   $('#pub-matches').textContent = '—';
   $('#pub-wins').textContent = '—';
   $('#pub-winrate').textContent = '—';
+  // Hide social buttons if viewing self
+  const socialDiv = $('#pub-social-actions');
+  if (socialDiv) socialDiv.style.display = (name === state.playerName) ? 'none' : 'flex';
+  // Reset add friend button
+  const addBtn = $('#btn-add-friend');
+  if (addBtn) { addBtn.textContent = '🧑‍🤝‍🧑 Add Friend'; addBtn.classList.remove('already-friend'); }
+  // Firebase: Check online status
+  const fid = name.replace(/[.#$\[\]\/]/g, '_');
+  const statusEl = $('#pub-online-status');
+  db.ref('players/' + fid + '/status').once('value').then(snap => {
+    const s = snap.val() || {};
+    if (s.online && s.inGame) {
+      statusEl.innerHTML = '<span class="pub-online-dot dot-ingame"></span> 🎮 Playing Now';
+      statusEl.style.color = 'var(--warning)';
+    } else if (s.online) {
+      statusEl.innerHTML = '<span class="pub-online-dot dot-online"></span> 🟢 Online';
+      statusEl.style.color = 'var(--success)';
+    } else {
+      statusEl.innerHTML = '<span class="pub-online-dot dot-offline"></span> ⚫ Offline';
+      statusEl.style.color = 'var(--text3)';
+    }
+  }).catch(() => { statusEl.innerHTML = ''; });
+  // Firebase: Check if already friends
+  const pid = getPlayerId();
+  if (pid && addBtn) {
+    db.ref('friends/' + pid + '/' + fid).once('value').then(snap => {
+      if (snap.val()) {
+        addBtn.textContent = '✅ Friends';
+        addBtn.classList.add('already-friend');
+      }
+    }).catch(() => {});
+  }
   openPopup('public-profile');
 }
 
@@ -2076,7 +2300,6 @@ socket.on('player-profile', (data) => {
 // ═══════════════════════════════════════════════════
 // ═══ 6. PROFILE UPDATE ON GAME OVER (Friend tracking) ═══
 // ═══════════════════════════════════════════════════
-// Emit profile data to server for world LB
 function syncProfileToServer() {
   const prof = loadProfile();
   socket.emit('sync-profile', {
@@ -2084,6 +2307,129 @@ function syncProfileToServer() {
     matches: prof.matches || 0, wins: prof.wins || 0
   });
 }
+
+// ═══════════════════════════════════════════════════
+// ═══ 7. FIREBASE FRIENDS SYSTEM ═══
+// ═══════════════════════════════════════════════════
+function addFriend(friendName, friendAvatar) {
+  const pid = getPlayerId();
+  const fid = friendName.replace(/[.#$\[\]\/]/g, '_');
+  if (!pid || pid === fid) return showToast('Cannot add yourself!');
+
+  // Check if already friends
+  db.ref('friends/' + pid + '/' + fid).once('value').then(snap => {
+    if (snap.val()) return showToast('Already friends! \ud83e\udd1d');
+    // Add both directions
+    db.ref('friends/' + pid + '/' + fid).set({
+      name: friendName, avatar: friendAvatar || '\ud83d\ude00', addedAt: Date.now()
+    });
+    db.ref('friends/' + fid + '/' + pid).set({
+      name: state.playerName, avatar: state.avatar, addedAt: Date.now()
+    });
+    showToast('\u2705 Friend added: ' + friendName);
+    // Update button in popup
+    const btn = $('#btn-add-friend');
+    if (btn) { btn.textContent = '\u2705 Friends'; btn.classList.add('already-friend'); }
+  });
+}
+
+function removeFriend(friendId) {
+  const pid = getPlayerId();
+  db.ref('friends/' + pid + '/' + friendId).remove();
+  db.ref('friends/' + friendId + '/' + pid).remove();
+  showToast('Friend removed');
+  renderFriendsPanel();
+}
+
+function renderFriendsPanel() {
+  const pid = getPlayerId();
+  if (!pid) return;
+  db.ref('friends/' + pid).once('value').then(snap => {
+    const friends = snap.val() || {};
+    const list = $('#friends-list-panel');
+    if (!list) return;
+    const entries = Object.entries(friends);
+    if (!entries.length) {
+      list.innerHTML = '<p class="empty-state">No friends yet. Add friends during games!</p>';
+      const countEl = $('#friends-online-count');
+      if (countEl) countEl.textContent = '0 online';
+      return;
+    }
+    // Fetch online status for each friend
+    const promises = entries.map(([fid, f]) =>
+      db.ref('players/' + fid + '/status').once('value').then(s => ({
+        id: fid, ...f, status: s.val() || {}
+      }))
+    );
+    Promise.all(promises).then(friendsData => {
+      friendsData.sort((a, b) => {
+        if (a.status.online && !b.status.online) return -1;
+        if (!a.status.online && b.status.online) return 1;
+        return (a.name || '').localeCompare(b.name || '');
+      });
+      const onlineCount = friendsData.filter(f => f.status.online).length;
+      const countEl = $('#friends-online-count');
+      if (countEl) countEl.textContent = onlineCount + ' online';
+
+      list.innerHTML = friendsData.map(f => {
+        const sc = f.status.online ? (f.status.inGame ? 'status-ingame' : 'status-online') : 'status-offline';
+        const st = f.status.online ? (f.status.inGame ? '\ud83c\udfae Playing' : '\ud83d\udfe2 Online') : '\u26ab Offline';
+        return `<div class="friend-card" data-fid="${f.id}" data-fname="${escHtml(f.name)}" data-favatar="${f.avatar || '\ud83d\ude00'}">
+          <div class="friend-card-left">
+            <div class="friend-card-avatar">${f.avatar || '\ud83d\ude00'}</div>
+            <div class="friend-card-info">
+              <div class="friend-card-name">${escHtml(f.name)}</div>
+              <div class="friend-card-status ${sc}">${st}</div>
+            </div>
+          </div>
+          <div class="friend-card-actions">
+            <button class="friend-send-btn" data-fid="${f.id}" data-fname="${escHtml(f.name)}" title="Send Coins">\ud83d\udcb0</button>
+            <button class="friend-remove-btn" data-fid="${f.id}" title="Remove">\u274c</button>
+          </div>
+        </div>`;
+      }).join('');
+
+      list.querySelectorAll('.friend-send-btn').forEach(btn => {
+        btn.onclick = (e) => { e.stopPropagation(); sendCoinsToFriend(btn.dataset.fid, btn.dataset.fname); };
+      });
+      list.querySelectorAll('.friend-remove-btn').forEach(btn => {
+        btn.onclick = (e) => { e.stopPropagation(); removeFriend(btn.dataset.fid); };
+      });
+      list.querySelectorAll('.friend-card').forEach(card => {
+        card.onclick = () => openPublicProfile(card.dataset.fname, card.dataset.favatar);
+      });
+    });
+  });
+}
+
+// ═══════════════════════════════════════════════════
+// ═══ 8. COIN TRANSFER SYSTEM ═══
+// ═══════════════════════════════════════════════════
+function sendCoinsToFriend(friendId, friendName) {
+  const pid = getPlayerId();
+  if (!pid) return;
+  // Daily limit check
+  const lastSent = localStorage.getItem('ms-coin-sent-date');
+  const today = new Date().toDateString();
+  if (lastSent === today) return showToast('\ud83d\udcb0 Already sent coins today! Try tomorrow.');
+  if (state.coins < 10) return showToast('\u274c Need at least 10 coins!');
+
+  // Deduct from sender
+  spendCoins(10);
+  // Add to receiver via Firebase transaction
+  db.ref('players/' + friendId + '/coins').transaction(c => (c || 0) + 10);
+  // Record transfer date
+  localStorage.setItem('ms-coin-sent-date', today);
+  showToast('\ud83d\udcb0 Sent 10 coins to ' + friendName + '!');
+  spawnCoinRain();
+}
+
+// ═══════════════════════════════════════════════════
+// ═══ 9. SOCKET: TURN SKIPPED ═══
+// ═══════════════════════════════════════════════════
+socket.on('turn-skipped', (data) => {
+  showToast('\u23ed\ufe0f ' + (data.playerName || 'Someone') + ' skipped their turn!', 2000);
+});
 
 // ─── Boot ───
 document.addEventListener('DOMContentLoaded', () => { initUI(); refreshPackSelector(); document.addEventListener('click', () => initSounds(), { once: true }); });
