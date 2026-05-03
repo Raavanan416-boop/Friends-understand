@@ -1,7 +1,8 @@
 /* ═══ MIND SYNC GAME — Client ═══ */
 const socket = io();
-const AVATARS = ['😀','😎','🤩','🥳','😈','👻','🤖','👽','🦊','🐱','🐶','🦁','🐸','🐧','🦄','🌟','🔥','💎','🎯','🎮'];
+const AVATARS = ['😀','😎','🤩','🥳','😈','👻','🤖','👽','🦊','🐱','🐶','🦁','🐸','🐧','🦄','🌟','🔥','💎','🎯','🎮','🐵','🐷','🐃','🐐','🐻'];
 const SOUNDS = {};
+let isInGame = false; // Track game state for shop restriction
 
 // Timer constants (must match server)
 const QUESTION_TIMER_MS = 60000;
@@ -122,7 +123,10 @@ function initSounds() {
   SOUNDS.wrong=()=>{tone(330,.2,'sawtooth',.1);setTimeout(()=>tone(260,.3,'sawtooth',.1),200)};
   SOUNDS.winner=()=>{[523,659,784,1047].forEach((f,i)=>setTimeout(()=>tone(f,.3),i*150))};
 }
-function sfx(n){if(SOUNDS[n])try{SOUNDS[n]()}catch(e){}}
+function sfx(n){
+  if (localStorage.getItem('ms-sound-off') === '1') return;
+  if(SOUNDS[n])try{SOUNDS[n]()}catch(e){}
+}
 
 // ─── Helpers ───
 const $=s=>document.querySelector(s), $$=s=>document.querySelectorAll(s);
@@ -152,6 +156,8 @@ function initUI() {
   checkWeeklyReset();
   if (state.playerName) {
     showScreen('home'); updateHomeUI(); fetchRooms();
+    // Sync profile to server for world leaderboard
+    setTimeout(() => syncProfileToServer(), 500);
     // Daily reward check
     if (canClaimDaily()) setTimeout(() => openPopup('daily-reward'), 800);
   } else { showScreen('login'); }
@@ -170,11 +176,20 @@ function initUI() {
   $('#btn-refresh-rooms').onclick = fetchRooms;
   $('#btn-install-topbar').onclick = installApp;
   $('#btn-save-name').onclick = saveName;
-  $('#btn-coin-shop').onclick = () => { updateCoinUI(); openPanel('coinshop'); };
+  $('#btn-coin-shop').onclick = () => {
+    if (isInGame) return showToast('🛒 Shop only available in Home screen!');
+    updateCoinUI(); openPanel('coinshop');
+  };
   $('#btn-profile').onclick = () => { renderProfile(); openPanel('profile'); };
   $('#btn-global-leaderboard').onclick = () => { renderGlobalLB(); openPanel('global-lb'); };
   $('#btn-question-packs').onclick = () => { renderQuestionPacks(); openPanel('qpacks'); };
-  $('#btn-sound-shop').onclick = () => { renderSoundShop(); openPanel('soundshop'); };
+  $('#btn-sound-shop').onclick = () => {
+    renderSoundShop();
+    openPanel('soundshop');
+    // Set toggle state
+    const toggle = $('#sound-toggle');
+    if (toggle) toggle.checked = localStorage.getItem('ms-sound-off') !== '1';
+  };
   $('#btn-world-lb').onclick = () => { renderWorldLB(); openPanel('world-lb'); };
   $('#btn-close-pub-profile').onclick = () => closePopup('public-profile');
   // Question pack tabs
@@ -183,9 +198,33 @@ function initUI() {
     $$('.qp-tab-content').forEach(c => c.style.display = 'none');
     $('#qp-' + t.dataset.qptab).style.display = 'block';
     if (t.dataset.qptab === 'create') buildPackCreateForm();
+    if (t.dataset.qptab === 'marketplace') renderMarketplace();
   });
   $('#btn-save-pack').onclick = saveCustomPack;
-  $('#btn-import-pack').onclick = importPack;
+
+  // Profile name edit
+  $('#btn-profile-edit-name').onclick = () => {
+    $('#input-profile-name').value = state.playerName;
+    $('#profile-name-edit').style.display = 'block';
+  };
+  $('#btn-profile-save-name').onclick = () => {
+    const name = $('#input-profile-name').value.trim();
+    if (!name) return showToast('Enter a name');
+    state.playerName = name;
+    localStorage.setItem('ms-name', name);
+    updateHomeUI();
+    $('#profile-name').textContent = name;
+    $('#profile-name-edit').style.display = 'none';
+    socket.emit('change-name', { newName: name });
+    syncProfileToServer();
+    showToast('✅ Name updated!');
+  };
+  $('#btn-profile-cancel-name').onclick = () => {
+    $('#profile-name-edit').style.display = 'none';
+  };
+
+  // History detail modal
+  $('#btn-close-history-detail').onclick = () => closePopup('history-detail');
   // Pack selector in create room
   $$('.pack-option').forEach(b => b.onclick = () => {
     $$('.pack-option').forEach(x => x.classList.remove('active')); b.classList.add('active'); sfx('click');
@@ -258,6 +297,15 @@ function initUI() {
   // Panels
   $$('.panel-overlay').forEach(o => o.onclick = closeAllPanels);
   buildAvatarGrid();
+  // Sound toggle
+  const soundToggle = $('#sound-toggle');
+  if (soundToggle) {
+    soundToggle.checked = localStorage.getItem('ms-sound-off') !== '1';
+    soundToggle.onchange = () => {
+      localStorage.setItem('ms-sound-off', soundToggle.checked ? '0' : '1');
+      showToast(soundToggle.checked ? '🔊 Sounds enabled' : '🔇 Sounds disabled');
+    };
+  }
 
   // Waiting
   $('#btn-leave-waiting').onclick = leaveRoom;
@@ -297,6 +345,8 @@ function doLogin() {
   updateHomeUI();
   fetchRooms();
   sfx('click');
+  // Sync profile to server on login
+  syncProfileToServer();
 }
 
 function saveName() {
@@ -353,7 +403,34 @@ function buildAvatarGrid() {
 function renderHistory() {
   const l = $('#history-list');
   if (!state.history.length) { l.innerHTML = '<p class="empty-state">No games played yet</p>'; return; }
-  l.innerHTML = state.history.slice(0, 20).map(h => `<div class="history-item"><div class="h-date">${h.date}</div><div class="h-result">${h.result}</div><div class="h-score">Score: ${h.score} | Players: ${h.players}</div></div>`).join('');
+  l.innerHTML = state.history.slice(0, 20).map((h, idx) => `<div class="history-item" data-hidx="${idx}"><div class="h-date">${h.date}</div><div class="h-result">${h.winner ? '🏆 Winner: ' + escHtml(h.winner) : h.result}</div><div class="h-score">Score: ${h.score} | Players: ${h.players}</div></div>`).join('');
+  l.querySelectorAll('.history-item').forEach(el => el.onclick = () => {
+    const idx = parseInt(el.dataset.hidx);
+    openHistoryDetail(idx);
+  });
+}
+
+function openHistoryDetail(idx) {
+  const h = state.history[idx];
+  if (!h) return;
+  let html = '<div class="history-detail-result">';
+  html += `<div class="hd-winner">🏆 ${escHtml(h.winner || h.result)}</div>`;
+  if (h.packName && h.packName !== 'default') html += `<div class="hd-pack">📦 Pack: ${escHtml(h.packName)}</div>`;
+  html += '</div>';
+  if (h.allScores && h.allScores.length) {
+    html += '<div class="history-detail-scores">';
+    h.allScores.forEach((s, i) => {
+      html += `<div class="hd-score-row${i === 0 ? ' hd-winner-row' : ''}">
+        <span class="hd-name">${i === 0 ? '🏆 ' : ''}${escHtml(s.name)}</span>
+        <span class="hd-pts">${s.score} pts</span>
+      </div>`;
+    });
+    html += '</div>';
+  } else {
+    html += `<p style="color:var(--text3);font-size:13px;text-align:center;margin-top:8px">Detailed scores not available for older matches</p>`;
+  }
+  $('#history-detail-content').innerHTML = html;
+  openPopup('history-detail');
 }
 
 // ─── Room Actions ───
@@ -421,6 +498,7 @@ function cleanupAndGoHome() {
   state.roomCode = null;
   state.lastRoomState = null;
   state.hasLeftRoom = true;
+  isInGame = false;
   clearInterval(state.timerInterval);
   closeAllPanels();
   closeAllPopups();
@@ -432,6 +510,7 @@ function goHome() {
   state.roomCode = null;
   state.lastRoomState = null;
   state.hasLeftRoom = false;
+  isInGame = false;
   clearInterval(state.timerInterval);
   closeAllPanels();
   closeAllPopups();
@@ -475,15 +554,19 @@ function renderGameContent(data) {
   const tp = data.turnPlayerName || 'Someone';
 
   if (data.phase === 'question') {
+    // If a pack question is injected, pre-fill it
+    const packQ = data.packQuestion || null;
     if (isMyTurn) {
-      gc.innerHTML = `<p class="game-phase-label">Your Turn</p><p class="game-turn-info">Write a question and its answer</p>
+      gc.innerHTML = `<p class="game-phase-label">Your Turn</p><p class="game-turn-info">${packQ ? 'Answer this pack question!' : 'Write a question and its answer'}</p>
+        ${packQ ? `<div class="game-question-display" style="margin-bottom:12px"><div class="q-label">📦 Pack Question</div><div class="q-text">${escHtml(packQ)}</div></div>` : ''}
         <div class="game-input-area">
-          <input type="text" id="input-question" class="input-field" placeholder="Type your question…" maxlength="120" autocomplete="off">
+          ${packQ ? '' : '<input type="text" id="input-question" class="input-field" placeholder="Type your question…" maxlength="120" autocomplete="off">'}
           <input type="text" id="input-answer" class="input-field" placeholder="The answer…" maxlength="60" autocomplete="off">
           <button class="btn-primary btn-neon" id="btn-submit-qa">Submit</button>
         </div>`;
       $('#btn-submit-qa').onclick = () => {
-        const q = $('#input-question').value.trim(), a = $('#input-answer').value.trim();
+        const q = packQ || ($('#input-question') ? $('#input-question').value.trim() : '');
+        const a = $('#input-answer').value.trim();
         if (!q || !a) return showToast('Fill both fields');
         socket.emit('submit-qa', { roomCode: state.roomCode, question: q, answer: a }); sfx('click');
       };
@@ -660,22 +743,34 @@ socket.on('room-state', data => {
     } else { $('#btn-start-game').style.display = 'none'; }
   } else if (['question','guess'].includes(data.phase)) {
     showScreen('game');
+    isInGame = true;
     $('#game-round-badge').textContent = `Round ${data.currentRound}/${data.totalRounds}`;
+    // Show pack banner if using a pack
+    const packBanner = $('#game-pack-banner');
+    if (packBanner) {
+      if (data.packDisplayName && data.questionPack !== 'default') {
+        packBanner.style.display = 'flex';
+        $('#game-pack-name').textContent = `Playing: ${data.packDisplayName}`;
+      } else {
+        packBanner.style.display = 'none';
+      }
+    }
     renderGameContent(data);
     updateLB(data.players); updatePL(data.players);
   }
 });
 
-socket.on('guess-results', ({ results, correctAnswer, question, scores, anyCorrect }) => {
+socket.on('guess-results', ({ results, correctAnswer, question, scores, anyCorrect, turnPlayerName, turnPlayerAnswer }) => {
   clearInterval(state.timerInterval);
 
   // ─── Helper functions ───
   function matchBadge(r) {
-    if (r.matchType === 'exact') return '<span class="match-badge match-exact">Perfect Match 🔥 +2</span>';
+    if (r.matchType === 'exact') return '<span class="match-badge match-exact">Perfect Match 🔥 +3</span>';
     if (r.matchType === 'partial') return '<span class="match-badge match-partial">Close Match 👍 +1</span>';
     return '<span class="match-badge match-none">No Match ❌ 0</span>';
   }
   function matchScoreLabel(r) {
+    if (r.matchScore === 3) return '<span class="rr-points rr-points-full">+3</span><span class="bonus-badge">🔥 BONUS</span>';
     if (r.matchScore === 2) return '<span class="rr-points rr-points-full">+2</span>';
     if (r.matchScore === 1) return '<span class="rr-points rr-points-half">+1</span>';
     return '<span class="rr-points rr-points-zero">+0</span>';
@@ -687,7 +782,7 @@ socket.on('guess-results', ({ results, correctAnswer, question, scores, anyCorre
 
   // Determine result text
   let resultLabel = 'No Match ❌ 0', resultClass = 'result-none', resultSub = 'Better luck next time!';
-  if (myMatchType === 'exact') { resultLabel = 'Perfect Match 🔥 +2'; resultClass = 'result-exact'; resultSub = 'You nailed it! +2 points'; }
+  if (myMatchType === 'exact') { resultLabel = 'Perfect Match 🔥 +3'; resultClass = 'result-exact'; resultSub = 'You nailed it! +2 base + 1 bonus = +3 points'; }
   else if (myMatchType === 'partial') { resultLabel = 'Close Match 👍 +1'; resultClass = 'result-partial'; resultSub = 'Almost there! +1 point'; }
 
   // ═══════════════════════════════════════════════════════════
@@ -751,6 +846,27 @@ socket.on('guess-results', ({ results, correctAnswer, question, scores, anyCorre
   });
   h += '</div>';
 
+  // ═══ ANSWER VISIBILITY FIX: Show BOTH answers for ALL players ═══
+  h += '<div class="both-answers-section" id="both-answers-section" style="display:none">';
+  h += '<div class="both-answers-title">👁️ All Answers Revealed</div>';
+  // Show creator's answer
+  h += `<div class="answer-pair">
+    <div class="answer-pair-card ap-creator">
+      <div class="ap-label">${escHtml(turnPlayerName || 'Creator')}'s Answer</div>
+      <div class="ap-value">${escHtml(correctAnswer)}</div>
+    </div>
+  </div>`;
+  // Show each guesser's answer
+  Object.values(results).forEach(r => {
+    h += `<div class="answer-pair">
+      <div class="answer-pair-card ap-guesser">
+        <div class="ap-label">${escHtml(r.playerName)}'s Guess</div>
+        <div class="ap-value">${escHtml(r.guess || '—')}</div>
+      </div>
+    </div>`;
+  });
+  h += '</div>';
+
   $('#game-content').innerHTML = h;
 
   // ═══════════════════════════════════════════════════════════
@@ -790,16 +906,18 @@ socket.on('guess-results', ({ results, correctAnswer, question, scores, anyCorre
       el.classList.add('phase-reveal');
     });
 
+    // ANSWER VISIBILITY: Show both answers section for ALL players
+    const bothSection = document.getElementById('both-answers-section');
+    if (bothSection) bothSection.style.display = 'block';
+
     // Sound effects based on match result
     if (my?.matchType === 'exact') playSoundPack('correct');
     else if (my?.matchType === 'partial') sfx('click');
     else if (my) playSoundPack('wrong');
 
-    // ─── COIN EARNING: 1 point = 1 coin + BONUS for perfect ───
+    // ─── COIN EARNING: matchScore from server already includes bonus (+3 for perfect) ───
     if (my && my.matchScore > 0) {
       let earned = state.doubleNext ? my.matchScore * 2 : my.matchScore;
-      // BONUS: +1 extra coin for perfect match
-      if (my.matchType === 'exact') earned += 1;
       state.doubleNext = false;
       addCoins(earned);
       // Track perfect matches for secret tasks
@@ -828,13 +946,24 @@ socket.on('guess-results', ({ results, correctAnswer, question, scores, anyCorre
   // Server auto-advances to next question at 10000ms
 });
 
-socket.on('game-over', ({ winner, scores }) => {
+socket.on('game-over', ({ winner, scores, packName, totalRounds }) => {
   clearInterval(state.timerInterval); playSoundPack('win');
+  isInGame = false;
   $('#gameover-title').textContent = winner.id === state.myId ? '🎉 You Won!' : 'Game Over!';
   $('#gameover-winner').innerHTML = `${winner.avatar} <strong>${escHtml(winner.name)}</strong> wins with ${winner.score} pts!`;
   $('#gameover-scores').innerHTML = scores.map((s,i) => `<div class="lb-row${s.id===winner.id?' highlight':''}"><span class="lb-rank ${['gold','silver','bronze'][i]||''}">#${i+1}</span><span class="lb-avatar">${s.avatar}</span><div class="lb-info"><div class="lb-name">${escHtml(s.name)}</div></div><span class="lb-score">${s.score}</span></div>`).join('');
   openPopup('gameover');
-  const hi = { date: new Date().toLocaleString(), result: winner.id === state.myId ? '🏆 Won!' : `${winner.name} won`, score: scores.find(s => s.id === state.myId)?.score || 0, players: scores.length };
+  // HISTORY DETAILS: Save rich history data with all player scores
+  const hi = {
+    date: new Date().toLocaleString(),
+    result: winner.id === state.myId ? '🏆 Won!' : `${winner.name} won`,
+    winner: winner.name,
+    score: scores.find(s => s.id === state.myId)?.score || 0,
+    players: scores.length,
+    allScores: scores.map(s => ({ name: s.name, score: s.score, avatar: s.avatar })),
+    packName: packName || 'default',
+    totalRounds: totalRounds || 0
+  };
   state.history.unshift(hi); if (state.history.length > 30) state.history.pop();
   localStorage.setItem('ms-history', JSON.stringify(state.history));
 
@@ -1023,6 +1152,7 @@ function renderProfile() {
   const rank = getRankInfo(state.coins, prof.wins || 0);
   $('#profile-avatar').textContent = state.avatar;
   $('#profile-name').textContent = state.playerName;
+  $('#profile-name-edit').style.display = 'none';
   $('#profile-rank-badge').textContent = rank.label;
   $('#profile-rank-badge').className = 'profile-rank-badge';
   $('#profile-coins').textContent = state.coins;
@@ -1030,6 +1160,8 @@ function renderProfile() {
   $('#profile-wins').textContent = prof.wins || 0;
   const wr = prof.matches > 0 ? Math.round((prof.wins||0)/(prof.matches)*100) : 0;
   $('#profile-winrate').textContent = wr + '%';
+  // Build avatar selector in profile
+  buildProfileAvatarGrid();
   // Best Friend detection
   const bfEl = $('#profile-best-friend');
   if (prof.opponents && Object.keys(prof.opponents).length > 0) {
@@ -1039,6 +1171,63 @@ function renderProfile() {
   } else {
     bfEl.style.display = 'none';
   }
+  // ─── Pack Earnings ───
+  socket.emit('get-pack-earnings');
+  // ─── Friends List with Levels ───
+  renderFriendsList();
+}
+
+function buildProfileAvatarGrid() {
+  const grid = $('#profile-avatar-grid');
+  if (!grid) return;
+  grid.innerHTML = '';
+  AVATARS.forEach(a => {
+    const d = document.createElement('div');
+    d.className = 'profile-avatar-option' + (a === state.avatar ? ' active' : '');
+    d.textContent = a;
+    d.onclick = () => {
+      state.avatar = a; localStorage.setItem('ms-avatar', a);
+      $$('.profile-avatar-option').forEach(o => o.classList.remove('active')); d.classList.add('active');
+      $$('.avatar-option').forEach(o => o.classList.toggle('active', o.textContent === a));
+      $('#profile-avatar').textContent = a;
+      updateHomeUI(); sfx('click');
+    };
+    grid.appendChild(d);
+  });
+}
+
+// Pack earnings response
+socket.on('pack-earnings', ({ earnings, totalEarned }) => {
+  const container = $('#profile-pack-earnings');
+  if (!container) return;
+  if (!earnings || !earnings.length) {
+    container.innerHTML = '<p class="empty-state">No pack earnings yet</p>';
+    return;
+  }
+  let h = `<div class="earning-total">💰 Total Earned: ${totalEarned} coins</div>`;
+  earnings.slice(0, 10).forEach(e => {
+    h += `<div class="earning-row">
+      <div><div class="er-buyer">${escHtml(e.buyerName)} bought</div><div class="er-pack">${escHtml(e.packName)}</div></div>
+      <div class="er-amount">+${e.amount} 💰</div>
+    </div>`;
+  });
+  container.innerHTML = h;
+});
+
+function renderFriendsList() {
+  const container = $('#profile-friends-list');
+  if (!container) return;
+  const fd = loadFriendData();
+  const entries = Object.entries(fd).sort((a,b) => b[1] - a[1]);
+  if (!entries.length) { container.innerHTML = '<p class="empty-state">Play matches to make friends!</p>'; return; }
+  container.innerHTML = entries.map(([name, matches]) => {
+    const fl = getFriendLevel(name);
+    return `<div class="friend-row">
+      <div class="friend-info"><span class="friend-name">${escHtml(name)}</span>
+      <span class="friend-matches">${matches} matches</span></div>
+      <span class="friend-level-badge ${fl.cls}">${fl.label}</span>
+    </div>`;
+  }).join('');
 }
 
 // ─── Global Leaderboard ───
@@ -1154,49 +1343,66 @@ function installApp() { if (!deferredPrompt) return showToast('Not available'); 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/service-worker.js').catch(()=>{});
 
 // ═══════════════════════════════════════════════════
-// ═══ 1. QUESTION PACKS SYSTEM ═══
+// ═══ 1. QUESTION PACKS SYSTEM (Buy/Unlock) ═══
 // ═══════════════════════════════════════════════════
 const DEFAULT_PACKS = {
-  love: { name: '❤️ Love', questions: [
+  love: { name: '❤️ Love Pack', emoji: '❤️', cost: 50, questions: [
     'What is your partner\'s favorite color?','What is your first date memory?','What gift would make you happiest?',
     'What song reminds you of love?','What is your love language?','What is the most romantic place?',
     'What nickname do you use for your partner?','What movie makes you cry?','What is your dream honeymoon?',
     'What is the sweetest thing someone said to you?'
   ]},
-  school: { name: '😂 School Memories', questions: [
+  school: { name: '😂 School Memories', emoji: '😂', cost: 50, questions: [
     'Who was the class clown?','What was your favorite subject?','Who was your best friend in school?',
     'What was your most embarrassing moment?','Which teacher was the strictest?','What did you eat for lunch?',
     'What was your school crush\'s name?','What sport did you play?','What was your nickname?',
     'What was your favorite school event?'
   ]},
-  crazy: { name: '😈 Crazy Truth', questions: [
+  crazy: { name: '😈 Crazy Truth', emoji: '😈', cost: 50, questions: [
     'What is the craziest thing you\'ve done?','What secret have you never told?','What is your guilty pleasure?',
     'What would you do with a million dollars?','What is your weirdest habit?','Who would you swap lives with?',
     'What is the most daring thing on your bucket list?','What is your biggest fear?','What lie do you tell most?',
     'If you could break one law, what would it be?'
   ]}
 };
+function loadOwnedPacks() { return JSON.parse(localStorage.getItem('ms-owned-packs') || '[]'); }
+function saveOwnedPacks(p) { localStorage.setItem('ms-owned-packs', JSON.stringify(p)); }
+function isPackOwned(key) { return loadOwnedPacks().includes(key); }
+function buyPack(key) {
+  const pack = DEFAULT_PACKS[key]; if (!pack) return;
+  if (isPackOwned(key)) return showToast('Already owned!');
+  if (!spendCoins(pack.cost)) return showToast('Not enough coins!');
+  const owned = loadOwnedPacks(); owned.push(key); saveOwnedPacks(owned);
+  showToast(`✅ ${pack.name} unlocked!`); spawnCoinRain(); renderQuestionPacks(); refreshPackSelector();
+}
 function loadCustomPacks() { return JSON.parse(localStorage.getItem('ms-custom-packs') || '[]'); }
 function saveCustomPacks(p) { localStorage.setItem('ms-custom-packs', JSON.stringify(p)); }
 
 function renderQuestionPacks() {
   const list = $('#qp-list'); if (!list) return;
   const custom = loadCustomPacks();
+  const owned = loadOwnedPacks();
   let h = '';
-  // Default packs
+  // Default packs with buy/unlock
   Object.entries(DEFAULT_PACKS).forEach(([key, pack]) => {
-    h += `<div class="qp-card"><div class="qp-card-header"><div class="qp-card-name">${pack.name}</div><div class="qp-card-count">${pack.questions.length} Q</div></div>
-    <div class="qp-card-questions">${pack.questions.slice(0,3).map(q=>'• '+q).join('<br>')}<br>...</div></div>`;
+    const isOwned = owned.includes(key);
+    h += `<div class="qp-card${isOwned?' qp-owned':''}">
+      <div class="qp-card-header"><div class="qp-card-name">${pack.name}</div>
+      <div class="qp-card-count">${pack.questions.length} Q</div></div>
+      <div class="qp-card-questions">${pack.questions.slice(0,3).map(q=>'• '+q).join('<br>')}...</div>
+      <div class="qp-card-actions">${isOwned
+        ? '<span class="qp-owned-badge">✅ Owned</span>'
+        : `<button class="qp-buy-btn" data-pack="${key}">🔓 Unlock (${pack.cost} 💰)</button>`
+      }</div></div>`;
   });
   // Custom packs
   custom.forEach((pack, i) => {
-    h += `<div class="qp-card"><div class="qp-card-header"><div class="qp-card-name">✨ ${escHtml(pack.name)}</div><div class="qp-card-count">${pack.questions.length} Q</div></div>
+    h += `<div class="qp-card qp-owned"><div class="qp-card-header"><div class="qp-card-name">✨ ${escHtml(pack.name)}</div><div class="qp-card-count">${pack.questions.length} Q</div></div>
     <div class="qp-card-questions">${pack.questions.slice(0,3).map(q=>'• '+escHtml(q)).join('<br>')}</div>
-    <div class="qp-card-actions"><button class="qp-share-btn" data-idx="${i}">📤 Share</button><button class="qp-delete-btn" data-idx="${i}">🗑 Delete</button></div></div>`;
+    <div class="qp-card-actions"><button class="qp-delete-btn" data-idx="${i}">🗑 Delete</button></div></div>`;
   });
-  if (!custom.length && !Object.keys(DEFAULT_PACKS).length) h = '<p class="empty-state">No packs yet</p>';
-  list.innerHTML = h;
-  list.querySelectorAll('.qp-share-btn').forEach(b => b.onclick = () => sharePack(parseInt(b.dataset.idx)));
+  list.innerHTML = h || '<p class="empty-state">No packs yet</p>';
+  list.querySelectorAll('.qp-buy-btn').forEach(b => b.onclick = () => buyPack(b.dataset.pack));
   list.querySelectorAll('.qp-delete-btn').forEach(b => b.onclick = () => { const c = loadCustomPacks(); c.splice(parseInt(b.dataset.idx),1); saveCustomPacks(c); renderQuestionPacks(); showToast('Pack deleted'); refreshPackSelector(); });
 }
 
@@ -1218,7 +1424,9 @@ function saveCustomPack() {
   const packs = loadCustomPacks();
   packs.push({ name, questions });
   saveCustomPacks(packs);
-  showToast('✅ Pack saved!');
+  // ALSO publish to server marketplace for ALL players to see
+  socket.emit('share-pack', { name, questions });
+  showToast('✅ Pack saved & published!');
   refreshPackSelector();
   // Switch to browse tab
   $$('.qp-tab').forEach(x => x.classList.remove('active'));
@@ -1228,34 +1436,79 @@ function saveCustomPack() {
   renderQuestionPacks();
 }
 
-function sharePack(idx) {
-  const packs = loadCustomPacks();
-  if (!packs[idx]) return;
-  const code = btoa(unescape(encodeURIComponent(JSON.stringify(packs[idx]))));
-  navigator.clipboard.writeText(code).then(() => showToast('📋 Share code copied!')).catch(() => {
-    showToast('Code: ' + code.substring(0,20) + '...', 4000);
-  });
+// Pack share server responses
+socket.on('share-pack-success', ({ packId, name }) => {
+  showToast(`📤 Pack "${name}" published to marketplace!`, 3000);
+});
+socket.on('share-pack-error', msg => showToast('❌ ' + msg));
+
+// ─── MARKETPLACE: Browse & Buy shared packs from all players ───
+function renderMarketplace() {
+  socket.emit('get-shared-packs');
 }
 
-function importPack() {
-  const code = $('#input-import-code').value.trim();
-  if (!code) return showToast('Paste a share code');
-  try {
-    const pack = JSON.parse(decodeURIComponent(escape(atob(code))));
-    if (!pack.name || !pack.questions || !pack.questions.length) throw 'Invalid';
-    const packs = loadCustomPacks();
-    packs.push(pack);
-    saveCustomPacks(packs);
-    showToast('✅ Pack imported: ' + pack.name);
-    refreshPackSelector();
-    $('#input-import-code').value = '';
-    renderQuestionPacks();
-  } catch(e) { showToast('❌ Invalid share code'); }
-}
+socket.on('shared-packs-list', (packs) => {
+  const list = $('#qp-marketplace-list');
+  if (!list) return;
+  if (!packs || !packs.length) {
+    list.innerHTML = '<p class="empty-state">No shared packs yet. Create one!</p>';
+    return;
+  }
+  const ownedShared = loadOwnedPacks();
+  list.innerHTML = packs.map(p => {
+    const isMine = p.creatorName === state.playerName;
+    const isOwned = p.buyers.includes(state.playerName) || isMine;
+    let actionHtml = '';
+    if (isMine) actionHtml = '<span class="mp-owned-badge">✨ Your Pack</span>';
+    else if (isOwned) actionHtml = '<span class="mp-owned-badge">✅ Owned</span>';
+    else actionHtml = `<button class="mp-buy-btn" data-pid="${p.id}" ${state.coins < p.price ? 'disabled' : ''}>🔓 Buy (${p.price} 💰)</button>`;
+    return `<div class="marketplace-pack-card">
+      <div class="mp-header"><div class="mp-name">${escHtml(p.name)}</div><div class="qp-card-count">${p.questionCount} Q</div></div>
+      <div class="mp-creator">by ${escHtml(p.creatorName)}</div>
+      <div class="mp-preview">${p.previewQuestions.map(q => '• ' + escHtml(q)).join('<br>')}...</div>
+      ${actionHtml}
+    </div>`;
+  }).join('');
+  list.querySelectorAll('.mp-buy-btn').forEach(b => b.onclick = () => {
+    const pid = b.dataset.pid;
+    const pack = packs.find(p => p.id === pid);
+    if (!pack) return;
+    if (!spendCoins(pack.price)) return showToast('Not enough coins!');
+    socket.emit('buy-shared-pack', { packId: pid });
+  });
+});
+
+socket.on('buy-pack-success', ({ packId, name, questions }) => {
+  // Save as owned local pack
+  const packs = loadCustomPacks();
+  packs.push({ name: '🛒 ' + name, questions });
+  saveCustomPacks(packs);
+  showToast(`✅ Pack "${name}" purchased!`, 3000);
+  spawnCoinRain();
+  refreshPackSelector();
+  renderMarketplace();
+});
+socket.on('buy-pack-error', msg => showToast('❌ ' + msg));
 
 function refreshPackSelector() {
   const sel = $('#pack-selector'); if (!sel) return;
-  // Remove old custom options
+  const owned = loadOwnedPacks();
+  // Update default pack options to show lock/unlock state
+  sel.querySelectorAll('.pack-option[data-pack]').forEach(btn => {
+    const pk = btn.dataset.pack;
+    if (pk === 'default') return; // default always available
+    if (pk.startsWith('custom-')) { btn.remove(); return; }
+    if (!owned.includes(pk)) {
+      btn.classList.add('pack-locked');
+      btn.disabled = true;
+      btn.title = 'Buy from Question Packs menu';
+    } else {
+      btn.classList.remove('pack-locked');
+      btn.disabled = false;
+      btn.title = '';
+    }
+  });
+  // Add custom packs
   sel.querySelectorAll('.pack-option[data-pack^="custom-"]').forEach(e => e.remove());
   const custom = loadCustomPacks();
   custom.forEach((p, i) => {
@@ -1333,6 +1586,7 @@ function renderSoundShop() {
 }
 
 function playSoundPack(type) {
+  if (localStorage.getItem('ms-sound-off') === '1') return;
   const spData = loadSoundPacks();
   const AC = window.AudioContext || window.webkitAudioContext;
   if (!AC) return;

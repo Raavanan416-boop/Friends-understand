@@ -261,7 +261,21 @@
       <h2 class="panel-title">👤 My Profile</h2>
       <div class="profile-hero">
         <div class="profile-avatar-large" id="profile-avatar">😀</div>
-        <div class="profile-name" id="profile-name">Player</div>
+        <div class="profile-name-row">
+          <div class="profile-name" id="profile-name">Player</div>
+          <button class="profile-edit-btn" id="btn-profile-edit-name" title="Edit Name">✏️</button>
+        </div>
+        <div class="profile-name-edit" id="profile-name-edit" style="display:none">
+          <input type="text" id="input-profile-name" class="input-field" placeholder="Enter new name" maxlength="15" autocomplete="off">
+          <div class="profile-edit-actions">
+            <button class="btn-primary btn-neon btn-sm" id="btn-profile-save-name">Save</button>
+            <button class="btn-secondary btn-sm" id="btn-profile-cancel-name">Cancel</button>
+          </div>
+        </div>
+        <div class="profile-avatar-selector" id="profile-avatar-selector">
+          <div class="profile-section-title" style="margin-top:12px">🐵 Select Avatar</div>
+          <div class="profile-avatar-grid" id="profile-avatar-grid"></div>
+        </div>
         <div class="profile-rank-badge" id="profile-rank-badge">🟤 Bronze</div>
       </div>
       <div class="profile-stats-grid">
@@ -293,6 +307,14 @@
           <div class="bf-name" id="bf-name">—</div>
         </div>
         <div class="bf-emoji">😏</div>
+      </div>
+      <div class="profile-section-title">💰 Pack Earnings</div>
+      <div class="profile-pack-earnings" id="profile-pack-earnings">
+        <p class="empty-state">No pack earnings yet</p>
+      </div>
+      <div class="profile-section-title">🧑‍🤝‍🧑 Friends</div>
+      <div class="profile-friends-list" id="profile-friends-list">
+        <p class="empty-state">Play matches to make friends!</p>
       </div>
     </div>
   </div>
@@ -327,20 +349,22 @@
       <h2 class="panel-title">🎭 Question Packs</h2>
       <div class="qp-tabs">
         <button class="qp-tab active" data-qptab="browse">Browse</button>
+        <button class="qp-tab" data-qptab="marketplace">Marketplace</button>
         <button class="qp-tab" data-qptab="create">Create</button>
-        <button class="qp-tab" data-qptab="import">Import</button>
       </div>
       <div class="qp-tab-content" id="qp-browse" style="display:block">
         <div class="qp-list" id="qp-list"></div>
       </div>
+      <div class="qp-tab-content" id="qp-marketplace" style="display:none">
+        <div class="marketplace-info">
+          <p style="font-size:12px;color:var(--text2);margin-bottom:12px">Player-created packs from all players. Buy to unlock!</p>
+        </div>
+        <div class="qp-list" id="qp-marketplace-list"></div>
+      </div>
       <div class="qp-tab-content" id="qp-create" style="display:none">
         <div class="form-group"><label>Pack Name</label><input type="text" id="input-pack-name" class="input-field" placeholder="My Pack" maxlength="25" autocomplete="off"></div>
         <div class="qp-questions-list" id="qp-questions-inputs"></div>
-        <button class="btn-primary btn-neon" id="btn-save-pack">💾 Save Pack</button>
-      </div>
-      <div class="qp-tab-content" id="qp-import" style="display:none">
-        <div class="form-group"><label>Share Code</label><input type="text" id="input-import-code" class="input-field" placeholder="Paste share code here" autocomplete="off"></div>
-        <button class="btn-primary btn-neon" id="btn-import-pack">📥 Import Pack</button>
+        <button class="btn-primary btn-neon" id="btn-save-pack">💾 Save & Publish Pack</button>
       </div>
     </div>
   </div>
@@ -352,6 +376,13 @@
       <div class="panel-handle"></div>
       <h2 class="panel-title">🎧 Sound Shop</h2>
       <div class="coin-shop-balance"><span class="coin-icon-lg">💰</span><span class="coin-balance-value" id="sound-coin-balance">0</span><span class="coin-balance-label">coins</span></div>
+      <div class="sound-toggle-row">
+        <span class="sound-toggle-label">🔊 Sounds Enabled</span>
+        <label class="toggle-switch">
+          <input type="checkbox" id="sound-toggle" checked>
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
       <div class="sound-packs-list" id="sound-packs-list"></div>
     </div>
   </div>
@@ -490,6 +521,10 @@
     <div class="game-timer-bar"><div class="timer-fill" id="timer-fill"></div></div>
     <div class="timer-text" id="timer-text">35s</div>
     <div class="game-content" id="game-content"></div>
+    <div class="game-pack-banner" id="game-pack-banner" style="display:none">
+      <span class="pack-banner-icon">📦</span>
+      <span class="pack-banner-text" id="game-pack-name">Playing: Default</span>
+    </div>
     <div class="emoji-bar">
       <button class="emoji-btn" data-emoji="😂">😂</button>
       <button class="emoji-btn" data-emoji="😲">😲</button>
@@ -563,6 +598,15 @@
         <button class="btn-secondary" id="btn-reject-play-again">Reject</button>
       </div>
       <div class="play-again-timer-bar"><div class="play-again-timer-fill" id="play-again-timer-fill"></div></div>
+    </div>
+  </div>
+
+  <!-- History Detail Modal -->
+  <div class="popup-overlay" id="popup-history-detail">
+    <div class="popup-card glass-card">
+      <h3>📊 Match Details</h3>
+      <div id="history-detail-content"></div>
+      <button class="btn-secondary popup-close-btn" id="btn-close-history-detail">Close</button>
     </div>
   </div>
 

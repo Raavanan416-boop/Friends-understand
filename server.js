@@ -31,6 +31,30 @@ const rooms = {};          // roomCode -> room object
 const playerSockets = {};  // socketId -> { roomCode, playerName, avatar }
 const leftPlayers = {};    // socketId -> true — tracks players who explicitly left
 const playerProfiles = {}; // playerName -> { name, avatar, coins, matches, wins }
+const sharedPacks = {};    // packId -> { id, creatorName, name, questions[], price, buyers[] }
+let nextPackId = 1;
+
+// ─── Question Pack Definitions ───
+const PACK_QUESTIONS = {
+  love: [
+    'What is your partner\'s favorite color?','What is your first date memory?','What gift would make you happiest?',
+    'What song reminds you of love?','What is your love language?','What is the most romantic place?',
+    'What nickname do you use for your partner?','What movie makes you cry?','What is your dream honeymoon?',
+    'What is the sweetest thing someone said to you?'
+  ],
+  school: [
+    'Who was the class clown?','What was your favorite subject?','Who was your best friend in school?',
+    'What was your most embarrassing moment?','Which teacher was the strictest?','What did you eat for lunch?',
+    'What was your school crush\'s name?','What sport did you play?','What was your nickname?',
+    'What was your favorite school event?'
+  ],
+  crazy: [
+    'What is the craziest thing you\'ve done?','What secret have you never told?','What is your guilty pleasure?',
+    'What would you do with a million dollars?','What is your weirdest habit?','Who would you swap lives with?',
+    'What is the most daring thing on your bucket list?','What is your biggest fear?','What lie do you tell most?',
+    'If you could break one law, what would it be?'
+  ]
+};
 
 // ─── Helpers ─────────────────────────────────────────────────
 function generateRoomCode() {
@@ -62,6 +86,38 @@ function broadcastRoomState(roomCode) {
     isHost: p.isHost,
     connected: p.connected
   }));
+  // If pack is not default and this turn should use a pack question, inject it
+  let packQuestion = null;
+  let packDisplayName = '';
+  const qp = room.questionPack || 'default';
+  if (qp !== 'default' && room.phase === 'question' && !room.packQuestionUsed) {
+    // Check built-in packs first
+    if (PACK_QUESTIONS[qp]) {
+      const packQs = PACK_QUESTIONS[qp];
+      packQuestion = packQs[Math.floor(Math.random() * packQs.length)];
+      packDisplayName = qp.charAt(0).toUpperCase() + qp.slice(1) + ' Pack';
+    } else if (qp.startsWith('shared-')) {
+      // Shared/custom pack from marketplace
+      const pid = qp.replace('shared-', '');
+      const sp = sharedPacks[pid];
+      if (sp && sp.questions.length > 0) {
+        packQuestion = sp.questions[Math.floor(Math.random() * sp.questions.length)];
+        packDisplayName = sp.name;
+      }
+    } else if (qp.startsWith('custom-')) {
+      // Local custom pack — question injected client-side
+      packDisplayName = 'Custom Pack';
+    }
+  }
+  // Determine pack display name for non-default packs
+  if (qp !== 'default' && !packDisplayName) {
+    if (PACK_QUESTIONS[qp]) packDisplayName = qp.charAt(0).toUpperCase() + qp.slice(1) + ' Pack';
+    else if (qp.startsWith('shared-')) {
+      const pid = qp.replace('shared-', '');
+      const sp = sharedPacks[pid];
+      if (sp) packDisplayName = sp.name;
+    }
+  }
   io.to(roomCode).emit('room-state', {
     roomCode,
     roomName: room.roomName || roomCode,
@@ -76,7 +132,10 @@ function broadcastRoomState(roomCode) {
     answer: room.phase === 'guess' ? '••••••' : room.currentAnswer,
     answerLength: room.currentAnswer ? room.currentAnswer.length : 0,
     turnPlayerName: activePlayers[room.currentTurnPlayerIndex]?.name || '',
-    timerEnd: room.timerEnd
+    timerEnd: room.timerEnd,
+    questionPack: room.questionPack || 'default',
+    packQuestion: packQuestion,
+    packDisplayName: packDisplayName || ''
   });
 }
 
@@ -106,6 +165,8 @@ io.on('connection', (socket) => {
       totalRounds: totalRounds || 3,
       roomName: roomName || 'Room ' + roomCode,
       password: password || '',
+      questionPack: questionPack || 'default',
+      packQuestionUsed: false,
       currentRound: 0,
       currentTurnPlayerIndex: 0,
       currentQuestion: '',
@@ -252,7 +313,8 @@ io.on('connection', (socket) => {
   // ── Sync Profile (for World Leaderboard) ──
   socket.on('sync-profile', ({ name, avatar, coins, matches, wins }) => {
     if (!name) return;
-    playerProfiles[name] = { name, avatar: avatar || '😀', score: coins || 0, coins: coins || 0, matches: matches || 0, wins: wins || 0 };
+    if (!playerProfiles[name]) playerProfiles[name] = {};
+    playerProfiles[name] = { ...playerProfiles[name], name, avatar: avatar || '😀', score: coins || 0, coins: coins || 0, matches: matches || 0, wins: wins || 0 };
   });
 
   // ── World Leaderboard ──
@@ -265,10 +327,74 @@ io.on('connection', (socket) => {
   socket.on('get-player-profile', ({ name }) => {
     const profile = playerProfiles[name];
     if (profile) {
+      // Include pack earnings info
       socket.emit('player-profile', profile);
     } else {
       socket.emit('player-profile', { name, avatar: '😀', coins: 0, matches: 0, wins: 0 });
     }
+  });
+
+  // ── Share Pack (Create & publish to marketplace) ──
+  socket.on('share-pack', ({ name, questions }) => {
+    const info = playerSockets[socket.id];
+    if (!info || !name || !questions || questions.length < 5) return socket.emit('share-pack-error', 'Invalid pack data');
+    const packId = 'P' + (nextPackId++);
+    sharedPacks[packId] = {
+      id: packId,
+      creatorName: info.playerName,
+      name: name,
+      questions: questions.slice(0, 10),
+      price: 50,
+      buyers: []
+    };
+    socket.emit('share-pack-success', { packId, name });
+    console.log(`[Pack] ${info.playerName} shared pack "${name}" (${packId})`);
+  });
+
+  // ── Get All Shared Packs ──
+  socket.on('get-shared-packs', () => {
+    const packs = Object.values(sharedPacks).map(p => ({
+      id: p.id,
+      creatorName: p.creatorName,
+      name: p.name,
+      questionCount: p.questions.length,
+      price: p.price,
+      previewQuestions: p.questions.slice(0, 3),
+      buyers: p.buyers || []
+    }));
+    socket.emit('shared-packs-list', packs);
+  });
+
+  // ── Buy Shared Pack ──
+  socket.on('buy-shared-pack', ({ packId }) => {
+    const info = playerSockets[socket.id];
+    if (!info) return;
+    const pack = sharedPacks[packId];
+    if (!pack) return socket.emit('buy-pack-error', 'Pack not found');
+    if (pack.buyers.includes(info.playerName)) return socket.emit('buy-pack-error', 'Already owned');
+    if (pack.creatorName === info.playerName) return socket.emit('buy-pack-error', 'You created this pack');
+    // Deduct coins handled client-side; server just records the purchase
+    pack.buyers.push(info.playerName);
+    // Give creator 50 coins
+    if (playerProfiles[pack.creatorName]) {
+      playerProfiles[pack.creatorName].coins = (playerProfiles[pack.creatorName].coins || 0) + 50;
+      playerProfiles[pack.creatorName].score = playerProfiles[pack.creatorName].coins;
+      if (!playerProfiles[pack.creatorName].packEarnings) playerProfiles[pack.creatorName].packEarnings = [];
+      playerProfiles[pack.creatorName].packEarnings.push({ buyerName: info.playerName, packName: pack.name, amount: 50, time: Date.now() });
+    }
+    // Send back the full pack questions to the buyer
+    socket.emit('buy-pack-success', { packId, name: pack.name, questions: pack.questions });
+    console.log(`[Pack] ${info.playerName} bought pack "${pack.name}" from ${pack.creatorName}`);
+  });
+
+  // ── Get Pack Earnings (for creator profile) ──
+  socket.on('get-pack-earnings', () => {
+    const info = playerSockets[socket.id];
+    if (!info) return;
+    const profile = playerProfiles[info.playerName];
+    const earnings = profile?.packEarnings || [];
+    const totalEarned = earnings.reduce((sum, e) => sum + e.amount, 0);
+    socket.emit('pack-earnings', { earnings, totalEarned });
   });
 
   // ── Emoji Reaction (with name) ──
@@ -751,12 +877,18 @@ function resolveGuesses(roomCode) {
   const turnPlayer = activePlayers[room.currentTurnPlayerIndex];
   const turnPlayerId = turnPlayer?.id;
 
+  // Build the turn player's answer for visibility
+  const turnPlayerAnswer = room.currentAnswer;
+
   activePlayers.forEach(p => {
     if (p.id === turnPlayerId) return;
     const guess = room.guesses[p.id] || '';
     const match = smartMatch(guess, correctAnswer);
-    if (match.score > 0) {
-      p.score += match.score;
+    // BONUS POINT SYSTEM: Perfect match = +2 base + +1 bonus = +3 total
+    let finalScore = match.score;
+    if (match.type === 'exact') finalScore = 3; // +2 base + +1 bonus
+    if (finalScore > 0) {
+      p.score += finalScore;
       anyCorrect = true;
     }
     results[p.id] = {
@@ -764,18 +896,22 @@ function resolveGuesses(roomCode) {
       isCorrect: match.type === 'exact',
       isPartial: match.type === 'partial',
       matchType: match.type,   // 'exact' | 'partial' | 'none'
-      matchScore: match.score, // 2 | 1 | 0
+      matchScore: finalScore,  // 3 | 1 | 0 (with bonus)
       playerName: p.name
     };
   });
 
   room.phase = 'roundEnd';
+  // ANSWER VISIBILITY FIX: Send BOTH answers to ALL players
   io.to(roomCode).emit('guess-results', {
     results,
     correctAnswer: room.currentAnswer,
     question: room.currentQuestion,
+    turnPlayerName: turnPlayer?.name || '',
+    turnPlayerAnswer: turnPlayerAnswer,
     scores: activePlayers.map(p => ({ id: p.id, name: p.name, score: p.score, avatar: p.avatar })),
-    anyCorrect
+    anyCorrect,
+    packDisplayName: room.packDisplayName || ''
   });
 
   // 10s total: 3.5s reveal delay + 5s visible result + 1.5s buffer
@@ -842,9 +978,12 @@ function endGame(roomCode) {
     return;
   }
 
+  // HISTORY DETAILS: Include all player scores for detailed history
   io.to(roomCode).emit('game-over', {
     winner: sorted[0],
-    scores: sorted.map(p => ({ id: p.id, name: p.name, score: p.score, avatar: p.avatar }))
+    scores: sorted.map(p => ({ id: p.id, name: p.name, score: p.score, avatar: p.avatar })),
+    packName: room.questionPack || 'default',
+    totalRounds: room.totalRounds
   });
   broadcastRoomState(roomCode);
 }
