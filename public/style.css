@@ -649,6 +649,11 @@ body{background:linear-gradient(135deg,#0b0b2a 0%,#1a1040 40%,#0d2137 70%,#1a0a3
 .sp-select-btn{background:rgba(0,206,201,.12);color:var(--success);border:1.5px solid rgba(0,206,201,.25)}
 .sp-select-btn:hover{background:rgba(0,206,201,.2)}
 .sp-selected-btn{background:var(--success);color:#fff;cursor:default}
+.sp-action-row{display:flex;gap:8px;align-items:stretch}
+.sp-preview-btn{flex:0 0 auto;background:linear-gradient(135deg,rgba(254,202,87,.12),rgba(255,165,0,.06));color:var(--warning);border:1.5px solid rgba(254,202,87,.25);border-radius:var(--radius-sm);padding:10px 16px;font-family:var(--font);font-size:13px;font-weight:700;cursor:pointer;transition:.25s;white-space:nowrap}
+.sp-preview-btn:hover{background:linear-gradient(135deg,rgba(254,202,87,.25),rgba(255,165,0,.12));border-color:rgba(254,202,87,.5);transform:translateY(-1px);box-shadow:0 4px 15px rgba(254,202,87,.2)}
+.sp-preview-btn:active{transform:scale(.95)}
+.sp-action-row .sp-action-btn:not(.sp-preview-btn){flex:1}
 
 /* ═══ WORLD LEADERBOARD PANEL ═══ */
 .world-lb-list{display:flex;flex-direction:column;gap:7px;max-height:500px;overflow-y:auto}

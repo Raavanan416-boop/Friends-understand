@@ -96,38 +96,25 @@ function broadcastRoomState(roomCode) {
     isHost: p.isHost,
     connected: p.connected
   }));
-  // If pack is not default and this turn should use a pack question, inject it
-  let packQuestion = null;
-  let packDisplayName = '';
+
+  // Use the pre-selected pack question stored in room (set during startQuestionPhase)
+  const packQuestion = room.currentPackQuestion || null;
   const qp = room.questionPack || 'default';
-  if (qp !== 'default' && room.phase === 'question' && !room.packQuestionUsed) {
-    // Check built-in packs first
+
+  // Determine pack display name
+  let packDisplayName = '';
+  if (qp !== 'default') {
     if (PACK_QUESTIONS[qp]) {
-      const packQs = PACK_QUESTIONS[qp];
-      packQuestion = packQs[Math.floor(Math.random() * packQs.length)];
       packDisplayName = qp.charAt(0).toUpperCase() + qp.slice(1) + ' Pack';
     } else if (qp.startsWith('shared-')) {
-      // Shared/custom pack from marketplace
-      const pid = qp.replace('shared-', '');
-      const sp = sharedPacks[pid];
-      if (sp && sp.questions.length > 0) {
-        packQuestion = sp.questions[Math.floor(Math.random() * sp.questions.length)];
-        packDisplayName = sp.name;
-      }
-    } else if (qp.startsWith('custom-')) {
-      // Local custom pack — question injected client-side
-      packDisplayName = 'Custom Pack';
-    }
-  }
-  // Determine pack display name for non-default packs
-  if (qp !== 'default' && !packDisplayName) {
-    if (PACK_QUESTIONS[qp]) packDisplayName = qp.charAt(0).toUpperCase() + qp.slice(1) + ' Pack';
-    else if (qp.startsWith('shared-')) {
       const pid = qp.replace('shared-', '');
       const sp = sharedPacks[pid];
       if (sp) packDisplayName = sp.name;
+    } else if (qp.startsWith('custom-')) {
+      packDisplayName = room.packDisplayName || 'Custom Pack';
     }
   }
+
   io.to(roomCode).emit('room-state', {
     roomCode,
     roomName: room.roomName || roomCode,
@@ -145,7 +132,9 @@ function broadcastRoomState(roomCode) {
     timerEnd: room.timerEnd,
     questionPack: room.questionPack || 'default',
     packQuestion: packQuestion,
-    packDisplayName: packDisplayName || ''
+    packDisplayName: packDisplayName || '',
+    // Tell client if this is a pack-mode turn (answer-only)
+    isPackMode: !!(qp !== 'default' && packQuestion)
   });
 }
 
@@ -154,7 +143,7 @@ io.on('connection', (socket) => {
   console.log(`[+] Connected: ${socket.id}`);
 
   // ── Create Room ──
-  socket.on('create-room', ({ playerName, avatar, maxPlayers, totalRounds, roomName, password, questionPack }) => {
+  socket.on('create-room', ({ playerName, avatar, maxPlayers, totalRounds, roomName, password, questionPack, packQuestions, packName }) => {
     // Prevent ghost re-entry: clear any leftPlayers flag
     delete leftPlayers[socket.id];
 
@@ -168,6 +157,32 @@ io.on('connection', (socket) => {
       connected: true,
       isActive: true
     };
+
+    // Resolve pack questions for custom packs
+    let resolvedPack = questionPack || 'default';
+    let roomPackQuestions = null;
+    let roomPackDisplayName = '';
+
+    if (resolvedPack !== 'default') {
+      if (PACK_QUESTIONS[resolvedPack]) {
+        // Built-in pack
+        roomPackQuestions = [...PACK_QUESTIONS[resolvedPack]];
+        roomPackDisplayName = resolvedPack.charAt(0).toUpperCase() + resolvedPack.slice(1) + ' Pack';
+      } else if (resolvedPack.startsWith('shared-')) {
+        // Shared marketplace pack
+        const pid = resolvedPack.replace('shared-', '');
+        const sp = sharedPacks[pid];
+        if (sp && sp.questions.length > 0) {
+          roomPackQuestions = [...sp.questions];
+          roomPackDisplayName = sp.name;
+        }
+      } else if (resolvedPack.startsWith('custom-') && Array.isArray(packQuestions) && packQuestions.length >= 5) {
+        // Custom pack — client sent the questions along
+        roomPackQuestions = packQuestions.slice(0, 10);
+        roomPackDisplayName = packName || 'Custom Pack';
+      }
+    }
+
     rooms[roomCode] = {
       players: [player],
       phase: 'waiting',
@@ -175,8 +190,11 @@ io.on('connection', (socket) => {
       totalRounds: totalRounds || 3,
       roomName: roomName || 'Room ' + roomCode,
       password: password || '',
-      questionPack: questionPack || 'default',
-      packQuestionUsed: false,
+      questionPack: resolvedPack,
+      packQuestions: roomPackQuestions,        // Array of questions for this room's pack
+      packDisplayName: roomPackDisplayName,    // Display name
+      usedPackQuestionIndices: [],             // Track used question indices to avoid repeats
+      currentPackQuestion: null,              // Currently active pack question for this turn
       currentRound: 0,
       currentTurnPlayerIndex: 0,
       currentQuestion: '',
@@ -192,7 +210,7 @@ io.on('connection', (socket) => {
     socket.emit('room-created', { roomCode });
     broadcastRoomState(roomCode);
     io.emit('rooms-updated');
-    console.log(`[Room] ${roomCode} created by ${playerName}`);
+    console.log(`[Room] ${roomCode} created by ${playerName} (pack: ${resolvedPack})`);
   });
 
   // ── Join Room ──
@@ -249,7 +267,7 @@ io.on('connection', (socket) => {
     console.log(`[Game] Started in ${roomCode}`);
   });
 
-  // ── Submit Question + Answer ──
+  // ── Submit Question + Answer (handles both pack-mode and default mode) ──
   socket.on('submit-qa', ({ roomCode, question, answer }) => {
     const room = rooms[roomCode];
     if (!room || room.phase !== 'question') return;
@@ -257,8 +275,20 @@ io.on('connection', (socket) => {
     if (activePlayers[room.currentTurnPlayerIndex]?.id !== socket.id) return;
 
     clearTimeout(room.timerRef);
-    room.currentQuestion = question.trim();
-    room.currentAnswer = answer.trim().toLowerCase();
+
+    // In pack mode, use the pre-selected pack question (ignore client question)
+    if (room.currentPackQuestion) {
+      room.currentQuestion = room.currentPackQuestion;
+    } else {
+      room.currentQuestion = (question || '').trim();
+    }
+    room.currentAnswer = (answer || '').trim().toLowerCase();
+
+    if (!room.currentQuestion || !room.currentAnswer) {
+      // If still empty, skip turn
+      room.currentQuestion = room.currentQuestion || '(No question submitted)';
+      room.currentAnswer = room.currentAnswer || '';
+    }
 
     startGuessPhase(roomCode);
   });
@@ -347,17 +377,26 @@ io.on('connection', (socket) => {
   // ── Share Pack (Create & publish to marketplace) ──
   socket.on('share-pack', ({ name, questions }) => {
     const info = playerSockets[socket.id];
-    if (!info || !name || !questions || questions.length < 5) return socket.emit('share-pack-error', 'Invalid pack data');
+    if (!info) return socket.emit('share-pack-error', 'Not connected');
+    if (!name || !name.trim()) return socket.emit('share-pack-error', 'Enter a pack name');
+    if (!questions || !Array.isArray(questions)) return socket.emit('share-pack-error', 'Invalid question data');
+    if (questions.length !== 10) return socket.emit('share-pack-error', 'Pack must have exactly 10 questions');
+    // Validate each question
+    for (let i = 0; i < questions.length; i++) {
+      if (!questions[i] || questions[i].trim().length <= 3) {
+        return socket.emit('share-pack-error', `Question ${i + 1} is too short (must be > 3 characters)`);
+      }
+    }
     const packId = 'P' + (nextPackId++);
     sharedPacks[packId] = {
       id: packId,
       creatorName: info.playerName,
-      name: name,
-      questions: questions.slice(0, 10),
+      name: name.trim(),
+      questions: questions.map(q => q.trim()).slice(0, 10),
       price: 50,
       buyers: []
     };
-    socket.emit('share-pack-success', { packId, name });
+    socket.emit('share-pack-success', { packId, name: name.trim() });
     // Broadcast to ALL connected clients so everyone sees the new pack immediately
     io.emit('packs-updated');
     console.log(`[Pack] ${info.playerName} shared pack "${name}" (${packId})`);
@@ -441,9 +480,11 @@ io.on('connection', (socket) => {
   socket.on('play-again-request', ({ roomCode }) => {
     const room = rooms[roomCode];
     if (!room) return socket.emit('play-again-error', 'Room no longer exists');
+
+    // ═══ CRITICAL: Re-check active players at request time ═══
     const active = getActivePlayers(room);
     if (active.length < 2) {
-      socket.emit('play-again-error', 'No player available');
+      socket.emit('play-again-error', 'Not enough players. Returning home.');
       return;
     }
     // Check if requesting player is still in room
@@ -454,6 +495,11 @@ io.on('connection', (socket) => {
     }
     const info = playerSockets[socket.id];
     if (!info) return;
+
+    // Initialize play-again tracking
+    if (!room.playAgainAccepted) room.playAgainAccepted = new Set();
+    // The requesting player is auto-accepted
+    room.playAgainAccepted.add(socket.id);
 
     // Set up play-again timeout (4 seconds server-side)
     if (room.playAgainTimer) clearTimeout(room.playAgainTimer);
@@ -473,24 +519,37 @@ io.on('connection', (socket) => {
     if (!room.playAgainAccepted) room.playAgainAccepted = new Set();
     room.playAgainAccepted.add(socket.id);
 
+    // ═══ CRITICAL: Re-verify active player count FRESH (not cached) ═══
     const active = getActivePlayers(room);
     if (active.length < 2) {
       room.playAgainAccepted = null;
       if (room.playAgainTimer) { clearTimeout(room.playAgainTimer); room.playAgainTimer = null; }
-      io.to(roomCode).emit('play-again-error', 'No player available');
+      io.to(roomCode).emit('play-again-error', 'Not enough players. Returning home.');
       return;
     }
+
     const allAccepted = active.every(p => room.playAgainAccepted.has(p.id));
     if (allAccepted) {
       // Clear timeout
       if (room.playAgainTimer) { clearTimeout(room.playAgainTimer); room.playAgainTimer = null; }
       room.playAgainAccepted = null;
-      room.players = active; // Clean inactive
+
+      // ═══ FINAL SAFETY: One more check right before starting ═══
+      const finalActive = getActivePlayers(room);
+      if (finalActive.length < 2) {
+        io.to(roomCode).emit('play-again-error', 'Not enough players. Returning home.');
+        return;
+      }
+
+      room.players = finalActive; // Clean inactive
       room.turnOrder = room.players.map((_, i) => i).sort(() => Math.random() - 0.5);
       room.currentRound = 1;
       room.turnsThisRound = 0;
       room.currentTurnPlayerIndex = room.turnOrder[0];
       room.players.forEach(p => p.score = 0);
+      // Reset pack question tracking for fresh game
+      room.usedPackQuestionIndices = [];
+      room.currentPackQuestion = null;
       io.to(roomCode).emit('play-again-start');
       startQuestionPhase(roomCode);
     }
@@ -575,6 +634,29 @@ function startQuestionPhase(roomCode) {
   room.currentQuestion = '';
   room.currentAnswer = '';
   room.guesses = {};
+  room.currentPackQuestion = null; // Reset for this turn
+
+  // ═══ PACK QUESTION SELECTION: Pick one question from the pack ═══
+  const qp = room.questionPack || 'default';
+  if (qp !== 'default' && room.packQuestions && room.packQuestions.length > 0) {
+    // Get available indices (not yet used)
+    const totalQs = room.packQuestions.length;
+    let available = [];
+    for (let i = 0; i < totalQs; i++) {
+      if (!room.usedPackQuestionIndices.includes(i)) available.push(i);
+    }
+    // If all used, reset (allow repeats)
+    if (available.length === 0) {
+      room.usedPackQuestionIndices = [];
+      available = room.packQuestions.map((_, i) => i);
+    }
+    // Pick a random available question
+    const randomIdx = available[Math.floor(Math.random() * available.length)];
+    room.currentPackQuestion = room.packQuestions[randomIdx];
+    room.usedPackQuestionIndices.push(randomIdx);
+    console.log(`[Pack] Turn question: "${room.currentPackQuestion}" (idx ${randomIdx})`);
+  }
+
   room.timerEnd = Date.now() + QUESTION_TIMER_MS;
 
   broadcastRoomState(roomCode);
@@ -582,8 +664,14 @@ function startQuestionPhase(roomCode) {
 
   room.timerRef = setTimeout(() => {
     if (room.phase === 'question') {
-      room.currentQuestion = '(No question submitted)';
-      room.currentAnswer = '';
+      // In pack mode, if no answer submitted, skip turn
+      if (room.currentPackQuestion) {
+        room.currentQuestion = room.currentPackQuestion;
+        room.currentAnswer = '';
+      } else {
+        room.currentQuestion = '(No question submitted)';
+        room.currentAnswer = '';
+      }
       advanceTurn(roomCode);
     }
   }, QUESTION_TIMER_MS + 1000);
@@ -1106,14 +1194,25 @@ function handleLeave(socket, roomCode, isDisconnect = false) {
     active[0].isHost = true;
   }
 
-  // ═══ STEP 9: If game is active, check player count ═══
-  const isGameActive = room.phase !== 'waiting' && room.phase !== 'gameEnd';
+  // ═══ STEP 9: If game is active OR in gameEnd, check player count ═══
+  // CRITICAL: Changed to include gameEnd phase — prevents play-again with 1 player
+  const isGameActive = room.phase !== 'waiting';
+
+  // ═══ CRITICAL: Cancel any pending play-again on ANY leave ═══
+  if (room.playAgainAccepted) {
+    room.playAgainAccepted = null;
+  }
+  if (room.playAgainTimer) {
+    clearTimeout(room.playAgainTimer);
+    room.playAgainTimer = null;
+  }
+  // Notify remaining players that play-again is cancelled
+  io.to(roomCode).emit('play-again-error', `${leavingName} left. Play again cancelled.`);
 
   if (isGameActive && active.length < 2) {
     // ──────────────────────────────────────────────
     // NOT ENOUGH PLAYERS → FORCE END FOR ALL MODES
-    // 2-player mode: other player left → game over
-    // 4-player mode: dropped below 2 → game over
+    // Covers: question, guess, roundEnd, AND gameEnd
     // ──────────────────────────────────────────────
     clearTimeout(room.timerRef);
     if (room.timerSyncRef) { clearInterval(room.timerSyncRef); room.timerSyncRef = null; }

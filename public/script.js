@@ -1,4 +1,18 @@
 /* ═══ MIND SYNC GAME — Client ═══ */
+
+// ═══ FIREBASE CONFIG — Replace with YOUR Firebase project values ═══
+const firebaseConfig = {
+  apiKey: "YOUR_API_KEY",
+  authDomain: "YOUR_PROJECT.firebaseapp.com",
+  databaseURL: "https://YOUR_PROJECT-default-rtdb.firebaseio.com",
+  projectId: "YOUR_PROJECT",
+  storageBucket: "YOUR_PROJECT.appspot.com",
+  messagingSenderId: "YOUR_SENDER_ID",
+  appId: "YOUR_APP_ID"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+
 const socket = io();
 const AVATARS = ['😀','😎','🤩','🥳','😈','👻','🤖','👽','🦊','🐱','🐶','🦁','🐸','🐧','🦄','🌟','🔥','💎','🎯','🎮','🐵','🐷','🐃','🐐','🐻'];
 const SOUNDS = {};
@@ -224,6 +238,10 @@ function initUI() {
 
   // History detail modal
   $('#btn-close-history-detail').onclick = () => closePopup('history-detail');
+  // Delete history confirmation
+  $('#btn-delete-history').onclick = () => openPopup('confirm-delete-history');
+  $('#btn-cancel-delete-history').onclick = () => closePopup('confirm-delete-history');
+  $('#btn-confirm-delete-history').onclick = () => deleteAllHistory();
   // Pack selector in create room
   $$('.pack-option').forEach(b => b.onclick = () => {
     $$('.pack-option').forEach(x => x.classList.remove('active')); b.classList.add('active'); sfx('click');
@@ -400,12 +418,32 @@ function buildAvatarGrid() {
 
 function renderHistory() {
   const l = $('#history-list');
-  if (!state.history.length) { l.innerHTML = '<p class="empty-state">No games played yet</p>'; return; }
+  const deleteBtn = $('#btn-delete-history');
+  if (!state.history.length) {
+    l.innerHTML = '<p class="empty-state">No games played yet</p>';
+    if (deleteBtn) deleteBtn.style.display = 'none';
+    return;
+  }
+  // Show delete button when there's history
+  if (deleteBtn) deleteBtn.style.display = 'block';
   l.innerHTML = state.history.slice(0, 20).map((h, idx) => `<div class="history-item" data-hidx="${idx}"><div class="h-date">${h.date}</div><div class="h-result">${h.winner ? '🏆 Winner: ' + escHtml(h.winner) : h.result}</div><div class="h-score">Score: ${h.score} | Players: ${h.players}</div></div>`).join('');
   l.querySelectorAll('.history-item').forEach(el => el.onclick = () => {
     const idx = parseInt(el.dataset.hidx);
     openHistoryDetail(idx);
   });
+}
+
+function deleteAllHistory() {
+  // Clear from state
+  state.history = [];
+  // Clear from localStorage
+  localStorage.removeItem('ms-history');
+  // Close confirmation popup
+  closePopup('confirm-delete-history');
+  // Re-render the history list
+  renderHistory();
+  showToast('✅ History Cleared!');
+  sfx('click');
 }
 
 function openHistoryDetail(idx) {
@@ -438,7 +476,31 @@ function createRoom() {
   const maxPlayers = parseInt($('#player-count-toggle .toggle-btn.active')?.dataset.value || '2');
   const totalRounds = parseInt($('#round-count-toggle .toggle-btn.active')?.dataset.value || '4');
   const selectedPack = $('.pack-option.active')?.dataset.pack || 'default';
-  socket.emit('create-room', { playerName: state.playerName, avatar: state.avatar, maxPlayers, totalRounds, roomName, password, questionPack: selectedPack });
+
+  // Build create-room payload
+  const payload = {
+    playerName: state.playerName,
+    avatar: state.avatar,
+    maxPlayers,
+    totalRounds,
+    roomName,
+    password,
+    questionPack: selectedPack
+  };
+
+  // For custom packs, send the pack questions to the server
+  if (selectedPack.startsWith('custom-')) {
+    const customIdx = parseInt(selectedPack.replace('custom-', ''));
+    const customPacks = loadCustomPacks();
+    const pack = customPacks[customIdx];
+    if (!pack || !pack.questions || pack.questions.length < 5) {
+      return showToast('❌ Invalid pack data. Please re-create the pack.');
+    }
+    payload.packQuestions = pack.questions;
+    payload.packName = pack.name;
+  }
+
+  socket.emit('create-room', payload);
   sfx('click');
 }
 
@@ -559,26 +621,59 @@ function renderGameContent(data) {
   const gc = $('#game-content');
   const isMyTurn = data.players?.[data.currentTurnPlayerIndex]?.id === state.myId;
   const tp = data.turnPlayerName || 'Someone';
+  const isPackMode = data.isPackMode; // Server tells us if pack question is active
+  const packQ = data.packQuestion || null;
 
   if (data.phase === 'question') {
-    // If a pack question is injected, pre-fill it
-    const packQ = data.packQuestion || null;
     if (isMyTurn) {
-      gc.innerHTML = `<p class="game-phase-label">Your Turn</p><p class="game-turn-info">${packQ ? 'Answer this pack question!' : 'Write a question and its answer'}</p>
-        ${packQ ? `<div class="game-question-display" style="margin-bottom:12px"><div class="q-label">📦 Pack Question</div><div class="q-text">${escHtml(packQ)}</div></div>` : ''}
-        <div class="game-input-area">
-          ${packQ ? '' : '<input type="text" id="input-question" class="input-field" placeholder="Type your question…" maxlength="120" autocomplete="off">'}
-          <input type="text" id="input-answer" class="input-field" placeholder="The answer…" maxlength="60" autocomplete="off">
-          <button class="btn-primary btn-neon" id="btn-submit-qa">Submit</button>
-        </div>`;
-      $('#btn-submit-qa').onclick = () => {
-        const q = packQ || ($('#input-question') ? $('#input-question').value.trim() : '');
-        const a = $('#input-answer').value.trim();
-        if (!q || !a) return showToast('Fill both fields');
-        socket.emit('submit-qa', { roomCode: state.roomCode, question: q, answer: a }); sfx('click');
-      };
+      if (isPackMode && packQ) {
+        // ═══ PACK MODE: Show auto-question, only answer input ═══
+        gc.innerHTML = `<p class="game-phase-label">Your Turn</p>
+          <p class="game-turn-info">Answer this pack question!</p>
+          <div class="game-question-display" style="margin-bottom:12px">
+            <div class="q-label">📦 ${escHtml(data.packDisplayName || 'Pack Question')}</div>
+            <div class="q-text">${escHtml(packQ)}</div>
+          </div>
+          <div class="game-input-area">
+            <input type="text" id="input-answer" class="input-field" placeholder="Type your answer…" maxlength="60" autocomplete="off">
+            <button class="btn-primary btn-neon" id="btn-submit-qa">Submit Answer</button>
+          </div>`;
+        $('#btn-submit-qa').onclick = () => {
+          const a = $('#input-answer').value.trim();
+          if (!a) return showToast('Type your answer!');
+          // Send the pack question + answer (server will use stored pack question)
+          socket.emit('submit-qa', { roomCode: state.roomCode, question: packQ, answer: a });
+          sfx('click');
+        };
+      } else {
+        // ═══ DEFAULT MODE: Question + Answer input ═══
+        gc.innerHTML = `<p class="game-phase-label">Your Turn</p>
+          <p class="game-turn-info">Write a question and its answer</p>
+          <div class="game-input-area">
+            <input type="text" id="input-question" class="input-field" placeholder="Type your question…" maxlength="120" autocomplete="off">
+            <input type="text" id="input-answer" class="input-field" placeholder="The answer…" maxlength="60" autocomplete="off">
+            <button class="btn-primary btn-neon" id="btn-submit-qa">Submit</button>
+          </div>`;
+        $('#btn-submit-qa').onclick = () => {
+          const q = $('#input-question').value.trim();
+          const a = $('#input-answer').value.trim();
+          if (!q || !a) return showToast('Fill both fields');
+          socket.emit('submit-qa', { roomCode: state.roomCode, question: q, answer: a });
+          sfx('click');
+        };
+      }
     } else {
-      gc.innerHTML = `<div class="waiting-turn-msg"><span class="wtm-emoji">🤔</span><p><strong>${escHtml(tp)}</strong> is writing a question…</p></div>`;
+      // Non-turn player: show waiting message
+      if (isPackMode && packQ) {
+        // In pack mode, show the question to ALL players while waiting
+        gc.innerHTML = `<div class="game-question-display" style="margin-bottom:12px">
+            <div class="q-label">📦 ${escHtml(data.packDisplayName || 'Pack Question')}</div>
+            <div class="q-text">${escHtml(packQ)}</div>
+          </div>
+          <div class="waiting-turn-msg"><span class="wtm-emoji">✍️</span><p><strong>${escHtml(tp)}</strong> is writing the answer…</p></div>`;
+      } else {
+        gc.innerHTML = `<div class="waiting-turn-msg"><span class="wtm-emoji">🤔</span><p><strong>${escHtml(tp)}</strong> is writing a question…</p></div>`;
+      }
     }
     startTimer(data.timerEnd, QUESTION_TIMER_MS, QUESTION_WARN_SEC);
   } else if (data.phase === 'guess') {
@@ -648,7 +743,7 @@ function renderGameContent(data) {
         area.innerHTML = `<div class="revealed-answer-hint"><div class="hint-label">Hint</div><div class="hint-value">${ansLen} letters<br><small style="color:var(--text2);font-size:12px">First & last letter hint</small></div></div>`;
         sfx('click');
       };
-      // NEW: Letter Hint — reveal first 2 letters
+      // Letter Hint — reveal first 2 letters
       $('#btn-adv-letter').onclick = () => {
         if (state.usedLetterHint) return;
         if (!spendCoins(ADV_COST.letterHint)) return showToast('Not enough coins!');
@@ -1064,11 +1159,15 @@ socket.on('emoji-reaction', ({ playerName, emoji }) => {
 // ── Player left ──
 socket.on('player-left', ({ playerName, remainingPlayers }) => {
   showToast(`${playerName} left the game`, 3000);
-  // If in 2-player mode and opponent left, immediately notify and go home
+  // Close play-again popup if open (opponent left while showing play-again prompt)
+  closePopup('play-again');
+  closePopup('gameover');
+  clearInterval(state._pat);
+  clearTimeout(state._playAgainTimeout);
+  // If opponent left, immediately notify and go home
   if (remainingPlayers < 2 && state.lastRoomState) {
     clearInterval(state.timerInterval);
     closeAllPopups();
-    clearTimeout(state._playAgainTimeout);
     showToast('⚠️ Opponent left. Game ended.', 4000);
     setTimeout(() => goHome(), 2000);
   }
@@ -1135,17 +1234,17 @@ socket.on('play-again-rejected', ({ byName }) => { clearTimeout(state._playAgain
 socket.on('play-again-error', msg => { clearTimeout(state._playAgainTimeout); showToast('❌ ' + msg); setTimeout(() => goHome(), 1500); });
 
 function requestPlayAgain() {
-  // Validate: check if there are other active players
+  // Validate: check if there are other active & connected players
   if (state.lastRoomState) {
-    const others = state.lastRoomState.players.filter(p => p.id !== state.myId);
+    const others = state.lastRoomState.players.filter(p => p.id !== state.myId && p.connected !== false);
     if (others.length < 1) {
       showToast('❌ No player available. Returning home.', 3000);
       setTimeout(() => goHome(), 1500);
       return;
     }
   }
+  // Server auto-accepts the requester, so no need to send play-again-accept separately
   socket.emit('play-again-request', { roomCode: state.roomCode });
-  socket.emit('play-again-accept', { roomCode: state.roomCode });
   showToast('Waiting for others…');
   sfx('click');
 
@@ -1221,8 +1320,8 @@ function renderProfile() {
   } else {
     bfEl.style.display = 'none';
   }
-  // ─── Pack Earnings ───
-  socket.emit('get-pack-earnings');
+  // ─── Pack Earnings (Firebase) ───
+  fetchPackEarnings();
   // ─── Friends List with Levels ───
   renderFriendsList();
 }
@@ -1246,23 +1345,32 @@ function buildProfileAvatarGrid() {
   });
 }
 
-// Pack earnings response
-socket.on('pack-earnings', ({ earnings, totalEarned }) => {
+// ─── Pack earnings from Firebase ───
+function fetchPackEarnings() {
   const container = $('#profile-pack-earnings');
   if (!container) return;
-  if (!earnings || !earnings.length) {
-    container.innerHTML = '<p class="empty-state">No pack earnings yet</p>';
-    return;
-  }
-  let h = `<div class="earning-total">💰 Total Earned: ${totalEarned} coins</div>`;
-  earnings.slice(0, 10).forEach(e => {
-    h += `<div class="earning-row">
-      <div><div class="er-buyer">${escHtml(e.buyerName)} bought</div><div class="er-pack">${escHtml(e.packName)}</div></div>
-      <div class="er-amount">+${e.amount} 💰</div>
-    </div>`;
-  });
-  container.innerHTML = h;
-});
+
+  db.ref('purchases').orderByChild('creator').equalTo(state.playerName)
+    .once('value').then(snapshot => {
+      const data = snapshot.val();
+      if (!data) {
+        container.innerHTML = '<p class="empty-state">No pack earnings yet</p>';
+        return;
+      }
+      const earnings = Object.values(data).sort((a, b) => (b.date || 0) - (a.date || 0));
+      const totalEarned = earnings.reduce((sum, e) => sum + (e.coins || 0), 0);
+      let h = `<div class="earning-total">💰 Total Earned: ${totalEarned} coins</div>`;
+      earnings.slice(0, 10).forEach(e => {
+        h += `<div class="earning-row">
+          <div><div class="er-buyer">${escHtml(e.buyer || 'Someone')} bought</div><div class="er-pack">${escHtml(e.packName || 'A pack')}</div></div>
+          <div class="er-amount">+${e.coins || 0} 💰</div>
+        </div>`;
+      });
+      container.innerHTML = h;
+    }).catch(() => {
+      container.innerHTML = '<p class="empty-state">No pack earnings yet</p>';
+    });
+}
 
 function renderFriendsList() {
   const container = $('#profile-friends-list');
@@ -1466,17 +1574,55 @@ function buildPackCreateForm() {
 
 function saveCustomPack() {
   const name = $('#input-pack-name').value.trim();
-  if (!name) return showToast('Enter a pack name');
+  if (!name) return showToast('❌ Enter a pack name');
   const fields = $$('.qp-q-field');
   const questions = [];
-  fields.forEach(f => { if (f.value.trim()) questions.push(f.value.trim()); });
-  if (questions.length < 5) return showToast('Add at least 5 questions');
+  let hasShortQ = false;
+  let shortIdx = -1;
+  fields.forEach((f, i) => {
+    const q = f.value.trim();
+    if (q) {
+      if (q.length <= 3) {
+        hasShortQ = true;
+        shortIdx = i + 1;
+      }
+      questions.push(q);
+    }
+  });
+  // Validate: exactly 10 questions
+  if (questions.length !== 10) return showToast(`❌ Add exactly 10 questions (you have ${questions.length})`);
+  // Validate: each question > 3 chars
+  if (hasShortQ) return showToast(`❌ Question ${shortIdx} is too short (must be > 3 characters)`);
+
+  // Save locally
   const packs = loadCustomPacks();
   packs.push({ name, questions });
   saveCustomPacks(packs);
-  // ALSO publish to server marketplace for ALL players to see
-  socket.emit('share-pack', { name, questions });
-  showToast('✅ Pack saved & published!');
+
+  // ═══ FIREBASE: Publish pack to database for ALL players to see ═══
+  const packRef = db.ref('packs').push();
+  const packId = packRef.key;
+  packRef.set({
+    name,
+    creator: state.playerName,
+    price: 50,
+    questions,
+    createdAt: Date.now(),
+    buyers: {}
+  }).then(() => {
+    showToast('✅ Pack saved & published to marketplace!', 3000);
+    // Save the Firebase pack ID against the last custom pack
+    const updatedPacks = loadCustomPacks();
+    if (updatedPacks.length > 0) {
+      updatedPacks[updatedPacks.length - 1].serverPackId = packId;
+      saveCustomPacks(updatedPacks);
+    }
+    refreshPackSelector();
+  }).catch(err => {
+    showToast('❌ Failed to publish: ' + err.message);
+    console.error('[Firebase] Pack save error:', err);
+  });
+
   refreshPackSelector();
   // Switch to browse tab
   $$('.qp-tab').forEach(x => x.classList.remove('active'));
@@ -1486,67 +1632,116 @@ function saveCustomPack() {
   renderQuestionPacks();
 }
 
-// Pack share server responses
-socket.on('share-pack-success', ({ packId, name }) => {
-  showToast(`📤 Pack "${name}" published to marketplace!`, 3000);
-});
-socket.on('share-pack-error', msg => showToast('❌ ' + msg));
-// Auto-refresh marketplace when any player publishes a new pack
-socket.on('packs-updated', () => {
-  // If marketplace tab is currently visible, refresh it
+// ═══ FIREBASE PACK SYSTEM — Real-time sync, no socket.io ═══
+// Cache of marketplace packs from Firebase (updated in real-time)
+let _firebasePacksCache = {};
+
+// ─── Real-time Firebase listener: auto-updates marketplace UI ───
+db.ref('packs').on('value', snapshot => {
+  _firebasePacksCache = snapshot.val() || {};
+  // Auto-refresh marketplace UI if visible
   const mpList = $('#qp-marketplace-list');
   if (mpList && mpList.offsetParent !== null) {
-    renderMarketplace();
+    displayMarketplacePacks(_firebasePacksCache);
   }
 });
 
-// ─── MARKETPLACE: Browse & Buy shared packs from all players ───
+// ─── MARKETPLACE: Browse & Buy shared packs ───
 function renderMarketplace() {
-  socket.emit('get-shared-packs');
+  // If we already have cached data, display immediately
+  if (Object.keys(_firebasePacksCache).length > 0) {
+    displayMarketplacePacks(_firebasePacksCache);
+  } else {
+    // Fetch once if no cache yet
+    db.ref('packs').once('value').then(snapshot => {
+      _firebasePacksCache = snapshot.val() || {};
+      displayMarketplacePacks(_firebasePacksCache);
+    });
+  }
 }
 
-socket.on('shared-packs-list', (packs) => {
+function displayMarketplacePacks(packsObj) {
   const list = $('#qp-marketplace-list');
   if (!list) return;
-  if (!packs || !packs.length) {
+
+  const packsArr = Object.entries(packsObj).map(([id, p]) => ({
+    id,
+    name: p.name || 'Unnamed',
+    creator: p.creator || 'Unknown',
+    price: p.price || 50,
+    questions: p.questions || [],
+    questionCount: (p.questions || []).length,
+    previewQuestions: (p.questions || []).slice(0, 3),
+    buyers: p.buyers || {},
+    createdAt: p.createdAt || 0
+  })).sort((a, b) => b.createdAt - a.createdAt); // Newest first
+
+  if (!packsArr.length) {
     list.innerHTML = '<p class="empty-state">No shared packs yet. Create one!</p>';
     return;
   }
-  const ownedShared = loadOwnedPacks();
-  list.innerHTML = packs.map(p => {
-    const isMine = p.creatorName === state.playerName;
-    const isOwned = p.buyers.includes(state.playerName) || isMine;
+
+  list.innerHTML = packsArr.map(p => {
+    const isMine = p.creator === state.playerName;
+    const buyerNames = Object.keys(p.buyers || {});
+    const isOwned = buyerNames.includes(state.playerName) || isMine;
     let actionHtml = '';
     if (isMine) actionHtml = '<span class="mp-owned-badge">✨ Your Pack</span>';
     else if (isOwned) actionHtml = '<span class="mp-owned-badge">✅ Owned</span>';
     else actionHtml = `<button class="mp-buy-btn" data-pid="${p.id}" ${state.coins < p.price ? 'disabled' : ''}>🔓 Buy (${p.price} 💰)</button>`;
     return `<div class="marketplace-pack-card">
       <div class="mp-header"><div class="mp-name">${escHtml(p.name)}</div><div class="qp-card-count">${p.questionCount} Q</div></div>
-      <div class="mp-creator">by ${escHtml(p.creatorName)}</div>
+      <div class="mp-creator">by ${escHtml(p.creator)}</div>
       <div class="mp-preview">${p.previewQuestions.map(q => '• ' + escHtml(q)).join('<br>')}...</div>
       ${actionHtml}
     </div>`;
   }).join('');
+
+  // Wire buy buttons
   list.querySelectorAll('.mp-buy-btn').forEach(b => b.onclick = () => {
     const pid = b.dataset.pid;
-    const pack = packs.find(p => p.id === pid);
+    const pack = packsArr.find(p => p.id === pid);
     if (!pack) return;
-    if (!spendCoins(pack.price)) return showToast('Not enough coins!');
-    socket.emit('buy-shared-pack', { packId: pid });
+    firebaseBuyPack(pid, pack);
   });
-});
+}
 
-socket.on('buy-pack-success', ({ packId, name, questions }) => {
-  // Save as owned local pack
-  const packs = loadCustomPacks();
-  packs.push({ name: '🛒 ' + name, questions });
-  saveCustomPacks(packs);
-  showToast(`✅ Pack "${name}" purchased!`, 3000);
+// ─── Buy Pack via Firebase ───
+function firebaseBuyPack(packId, packData) {
+  if (!packData) return showToast('❌ Pack not found');
+  if (state.coins < packData.price) return showToast('❌ Not enough coins!');
+
+  // Check if already owned
+  const buyerNames = Object.keys(packData.buyers || {});
+  if (buyerNames.includes(state.playerName)) return showToast('Already owned!');
+  if (packData.creator === state.playerName) return showToast('You created this pack!');
+
+  // Deduct coins locally
+  if (!spendCoins(packData.price)) return showToast('Not enough coins!');
+
+  // ═══ FIREBASE: Record buyer on the pack ═══
+  db.ref(`packs/${packId}/buyers/${state.playerName}`).set(true);
+
+  // ═══ FIREBASE: Record purchase ═══
+  db.ref('purchases').push({
+    buyer: state.playerName,
+    creator: packData.creator,
+    packId,
+    packName: packData.name,
+    coins: packData.price,
+    date: Date.now()
+  });
+
+  // Save as owned local pack (with full questions)
+  const localPacks = loadCustomPacks();
+  localPacks.push({ name: '🛒 ' + packData.name, questions: packData.questions, serverPackId: packId });
+  saveCustomPacks(localPacks);
+
+  showToast(`✅ Pack "${packData.name}" purchased!`, 3000);
   spawnCoinRain();
   refreshPackSelector();
-  renderMarketplace();
-});
-socket.on('buy-pack-error', msg => showToast('❌ ' + msg));
+  // Marketplace auto-updates via Firebase listener
+}
 
 function refreshPackSelector() {
   const sel = $('#pack-selector'); if (!sel) return;
@@ -1612,6 +1807,76 @@ const SOUND_PACKS = [
 function loadSoundPacks() { return JSON.parse(localStorage.getItem('ms-sound-packs') || '{"owned":["default"],"active":"default"}'); }
 function saveSoundPacks(d) { localStorage.setItem('ms-sound-packs', JSON.stringify(d)); }
 
+// Track active preview so we can stop it
+let _previewCtx = null;
+
+function previewSoundPack(packId) {
+  // Stop any previous preview
+  if (_previewCtx) {
+    try { _previewCtx.close(); } catch(e) {}
+    _previewCtx = null;
+  }
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return showToast('Audio not supported');
+  const ctx = new AC();
+  _previewCtx = ctx;
+
+  function tone(f, d, t='sine', v=0.15, delay=0) {
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = t; o.frequency.value = f;
+    g.gain.setValueAtTime(v, ctx.currentTime + delay);
+    g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + delay + d);
+    o.connect(g); g.connect(ctx.destination);
+    o.start(ctx.currentTime + delay);
+    o.stop(ctx.currentTime + delay + d);
+  }
+
+  if (packId === 'default') {
+    // Simple beep-ding-buzz sequence
+    tone(440, 0.15, 'sine', 0.12, 0);
+    tone(880, 0.15, 'sine', 0.12, 0.2);
+    tone(660, 0.2, 'sine', 0.12, 0.4);
+  } else if (packId === 'funny') {
+    // Boing + slide whistle effect
+    tone(200, 0.1, 'sine', 0.15, 0);
+    tone(600, 0.1, 'sine', 0.15, 0.05);
+    tone(900, 0.15, 'sine', 0.12, 0.1);
+    tone(1200, 0.1, 'sine', 0.1, 0.15);
+    // Slide whistle down
+    tone(1400, 0.1, 'sine', 0.1, 0.3);
+    tone(1000, 0.1, 'sine', 0.1, 0.4);
+    tone(600, 0.15, 'sine', 0.1, 0.5);
+    tone(300, 0.2, 'sawtooth', 0.08, 0.65);
+  } else if (packId === 'victory') {
+    // Epic fanfare melody
+    [523, 659, 784, 1047, 1319, 1568].forEach((f, i) => {
+      tone(f, 0.25, 'sine', 0.12, i * 0.13);
+    });
+    // Add harmony
+    [262, 330, 392, 523].forEach((f, i) => {
+      tone(f, 0.3, 'triangle', 0.06, i * 0.13);
+    });
+  } else if (packId === 'troll') {
+    // Sad trombone + bruh effect
+    [400, 380, 350, 300, 250, 200, 150].forEach((f, i) => {
+      tone(f, 0.18, 'sawtooth', 0.1, i * 0.12);
+    });
+    // "Oof" bass hit
+    tone(80, 0.4, 'square', 0.1, 0.9);
+    tone(60, 0.3, 'sawtooth', 0.08, 1.0);
+  }
+
+  // Auto-close audio context after preview finishes
+  setTimeout(() => {
+    if (_previewCtx === ctx) {
+      try { ctx.close(); } catch(e) {}
+      _previewCtx = null;
+    }
+  }, 2000);
+
+  showToast('🎵 Preview: ' + SOUND_PACKS.find(p => p.id === packId)?.name || packId, 1500);
+}
+
 function renderSoundShop() {
   const spData = loadSoundPacks();
   const bal = $('#sound-coin-balance'); if (bal) bal.textContent = state.coins;
@@ -1619,10 +1884,19 @@ function renderSoundShop() {
   list.innerHTML = SOUND_PACKS.map(p => {
     const owned = spData.owned.includes(p.id);
     const active = spData.active === p.id;
+
+    // Action buttons: Preview always available + Buy/Select/Selected
     let actionHtml = '';
-    if (active) actionHtml = `<button class="sp-action-btn sp-selected-btn">✅ Selected</button>`;
-    else if (owned) actionHtml = `<button class="sp-action-btn sp-select-btn" data-sp="${p.id}">Select</button>`;
-    else actionHtml = `<button class="sp-action-btn sp-buy-btn" data-sp="${p.id}" data-cost="${p.price}" ${state.coins < p.price ? 'disabled' : ''}>🔓 Unlock (${p.price} 💰)</button>`;
+    const previewBtn = `<button class="sp-action-btn sp-preview-btn" data-sp="${p.id}" title="Preview sounds">▶️ Preview</button>`;
+
+    if (active) {
+      actionHtml = `<div class="sp-action-row">${previewBtn}<button class="sp-action-btn sp-selected-btn">✅ Selected</button></div>`;
+    } else if (owned) {
+      actionHtml = `<div class="sp-action-row">${previewBtn}<button class="sp-action-btn sp-select-btn" data-sp="${p.id}">Select</button></div>`;
+    } else {
+      actionHtml = `<div class="sp-action-row">${previewBtn}<button class="sp-action-btn sp-buy-btn" data-sp="${p.id}" data-cost="${p.price}" ${state.coins < p.price ? 'disabled' : ''}>🔓 Unlock (${p.price} 💰)</button></div>`;
+    }
+
     return `<div class="sound-pack-card${active?' sp-active':''}">
       <div class="sp-header"><div class="sp-name">${p.name}</div><div class="sp-price${owned?' sp-owned':''}">${owned?'✅ Owned':p.price+' 💰'}</div></div>
       <div class="sp-desc">${p.desc}</div>
@@ -1630,13 +1904,20 @@ function renderSoundShop() {
       ${actionHtml}
     </div>`;
   }).join('');
-  // Wire buttons
+
+  // Wire preview buttons
+  list.querySelectorAll('.sp-preview-btn').forEach(b => b.onclick = (e) => {
+    e.stopPropagation();
+    previewSoundPack(b.dataset.sp);
+  });
+  // Wire buy buttons
   list.querySelectorAll('.sp-buy-btn').forEach(b => b.onclick = () => {
     const cost = parseInt(b.dataset.cost);
     if (!spendCoins(cost)) return showToast('Not enough coins!');
     const d = loadSoundPacks(); d.owned.push(b.dataset.sp); d.active = b.dataset.sp; saveSoundPacks(d);
     showToast('🎧 Sound pack unlocked!'); spawnCoinRain(); renderSoundShop();
   });
+  // Wire select buttons
   list.querySelectorAll('.sp-select-btn').forEach(b => b.onclick = () => {
     const d = loadSoundPacks(); d.active = b.dataset.sp; saveSoundPacks(d);
     showToast('🎧 Sound pack selected!'); renderSoundShop();

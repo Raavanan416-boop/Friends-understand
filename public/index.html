@@ -177,6 +177,9 @@
       <div class="history-list" id="history-list">
         <p class="empty-state">No games played yet</p>
       </div>
+      <button class="btn-danger" id="btn-delete-history" style="margin-top:12px;width:100%;padding:10px;border-radius:12px;border:none;background:linear-gradient(135deg,#ff4444,#cc0000);color:#fff;font-size:14px;font-weight:600;cursor:pointer;display:none">
+        🗑 Delete All History
+      </button>
     </div>
   </div>
 
@@ -608,12 +611,26 @@
     </div>
   </div>
 
+  <!-- Delete History Confirmation Modal -->
+  <div class="popup-overlay" id="popup-confirm-delete-history">
+    <div class="popup-card glass-card" style="text-align:center">
+      <h3>🗑 Delete History?</h3>
+      <p style="color:var(--text2);margin:12px 0">Are you sure you want to delete all game history? This cannot be undone.</p>
+      <div style="display:flex;gap:10px;margin-top:16px">
+        <button class="btn-secondary popup-close-btn" id="btn-cancel-delete-history" style="flex:1">❌ Cancel</button>
+        <button class="btn-primary" id="btn-confirm-delete-history" style="flex:1;background:linear-gradient(135deg,#ff4444,#cc0000);border:none;padding:10px;border-radius:12px;color:#fff;font-weight:700;cursor:pointer">✅ Yes, Delete</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Toast -->
   <div class="toast" id="toast"></div>
 
   <!-- Coin Rain Container -->
   <div id="coin-rain-container"></div>
 
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
   <script src="/socket.io/socket.io.js"></script>
   <script src="script.js"></script>
 </body>
