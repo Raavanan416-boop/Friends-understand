@@ -13,8 +13,18 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // ─── REST API ────────────────────────────────────────────────
 app.get('/api/rooms', (req, res) => {
+  const seen = new Set();
   const list = Object.entries(rooms)
-    .filter(([, r]) => r.phase === 'waiting')
+    .filter(([code, r]) => {
+      // Only show waiting rooms with at least 1 active player
+      if (!r || !r.roomName || r.phase !== 'waiting') return false;
+      const activePlayers = getActivePlayers(r);
+      if (activePlayers.length === 0) return false;
+      // Deduplicate by roomCode
+      if (seen.has(code)) return false;
+      seen.add(code);
+      return true;
+    })
     .map(([code, r]) => ({
       roomCode: code,
       roomName: r.roomName || code,
@@ -348,6 +358,8 @@ io.on('connection', (socket) => {
       buyers: []
     };
     socket.emit('share-pack-success', { packId, name });
+    // Broadcast to ALL connected clients so everyone sees the new pack immediately
+    io.emit('packs-updated');
     console.log(`[Pack] ${info.playerName} shared pack "${name}" (${packId})`);
   });
 
@@ -903,11 +915,13 @@ function resolveGuesses(roomCode) {
 
   room.phase = 'roundEnd';
   // ANSWER VISIBILITY FIX: Send BOTH answers to ALL players
+  // Include turnPlayerId so clients can differentiate creator vs guesser views
   io.to(roomCode).emit('guess-results', {
     results,
     correctAnswer: room.currentAnswer,
     question: room.currentQuestion,
     turnPlayerName: turnPlayer?.name || '',
+    turnPlayerId: turnPlayerId || '',
     turnPlayerAnswer: turnPlayerAnswer,
     scores: activePlayers.map(p => ({ id: p.id, name: p.name, score: p.score, avatar: p.avatar })),
     anyCorrect,

@@ -170,8 +170,7 @@ function initUI() {
 
   // Home
   $('#btn-history').onclick = () => { renderHistory(); openPanel('history'); };
-  $('#btn-name-change').onclick = () => { $('#input-new-name').value = state.playerName; openPanel('name'); };
-  $('#btn-avatar-change').onclick = () => openPanel('avatar');
+  // Name and avatar editing is now ONLY inside the Profile page
   $('#btn-create-room').onclick = createRoom;
   $('#btn-refresh-rooms').onclick = fetchRooms;
   $('#btn-install-topbar').onclick = installApp;
@@ -365,7 +364,6 @@ function saveName() {
 function updateHomeUI() {
   $('#home-avatar').textContent = state.avatar;
   $('#home-player-name').textContent = state.playerName;
-  $('#topbar-avatar').textContent = state.avatar;
   updateCoinUI();
 }
 
@@ -449,7 +447,16 @@ async function fetchRooms() {
   list.innerHTML = '<div class="rooms-loading"><div class="spinner"></div><p>Loading rooms…</p></div>';
   try {
     const res = await fetch('/api/rooms');
-    const rooms = await res.json();
+    let rooms = await res.json();
+    // Client-side filtering: remove rooms with no name or 0 players
+    rooms = rooms.filter(r => r && r.roomName && r.players > 0);
+    // Deduplicate by roomCode
+    const seen = new Set();
+    rooms = rooms.filter(r => {
+      if (seen.has(r.roomCode)) return false;
+      seen.add(r.roomCode);
+      return true;
+    });
     if (!rooms.length) { list.innerHTML = '<p class="rooms-empty">No rooms available. Create one!</p>'; return; }
     list.innerHTML = rooms.map(r => `
       <div class="room-item" data-code="${r.roomCode}" data-has-pw="${r.hasPassword}">
@@ -760,8 +767,11 @@ socket.on('room-state', data => {
   }
 });
 
-socket.on('guess-results', ({ results, correctAnswer, question, scores, anyCorrect, turnPlayerName, turnPlayerAnswer }) => {
+socket.on('guess-results', ({ results, correctAnswer, question, scores, anyCorrect, turnPlayerName, turnPlayerId, turnPlayerAnswer }) => {
   clearInterval(state.timerInterval);
+
+  // Determine if I am the question creator
+  const isQuestionCreator = (state.myId === turnPlayerId);
 
   // ─── Helper functions ───
   function matchBadge(r) {
@@ -780,92 +790,127 @@ socket.on('guess-results', ({ results, correctAnswer, question, scores, anyCorre
   const myGuess = my ? (my.guess || '—') : '—';
   const myMatchType = my ? my.matchType : 'none';
 
-  // Determine result text
+  // Determine result text for guessers
   let resultLabel = 'No Match ❌ 0', resultClass = 'result-none', resultSub = 'Better luck next time!';
   if (myMatchType === 'exact') { resultLabel = 'Perfect Match 🔥 +3'; resultClass = 'result-exact'; resultSub = 'You nailed it! +2 base + 1 bonus = +3 points'; }
   else if (myMatchType === 'partial') { resultLabel = 'Close Match 👍 +1'; resultClass = 'result-partial'; resultSub = 'Almost there! +1 point'; }
 
-  // ═══════════════════════════════════════════════════════════
-  // PHASE 1 (0ms): Show question + HIDDEN answer card
-  // ═══════════════════════════════════════════════════════════
   let h = '';
 
-  // Question display
-  h += `<div class="game-question-display"><div class="q-label">Question</div><div class="q-text">${escHtml(question)}</div></div>`;
+  if (isQuestionCreator) {
+    // ════════════════════════════════════════════════════════════
+    // QUESTION CREATOR VIEW: Full result UI with answer comparison
+    // ════════════════════════════════════════════════════════════
+    h += `<div class="game-question-display"><div class="q-label">Your Question</div><div class="q-text">${escHtml(question)}</div></div>`;
 
-  // Answer card — starts HIDDEN (not flipped), will flip in Phase 2
-  h += `<div class="answer-card-wrapper">
-    <div class="answer-card" id="answer-card-reveal">
-      <div class="answer-card-inner">
-        <div class="answer-card-front">
-          <div class="answer-card-icon">🔒</div>
-          <div class="answer-card-label">Answer Hidden</div>
-          <div class="answer-card-masked">• • • • •</div>
+    // Answer card — flip to reveal
+    h += `<div class="answer-card-wrapper">
+      <div class="answer-card" id="answer-card-reveal">
+        <div class="answer-card-inner">
+          <div class="answer-card-front">
+            <div class="answer-card-icon">🔒</div>
+            <div class="answer-card-label">Answer Hidden</div>
+            <div class="answer-card-masked">• • • • •</div>
+          </div>
+          <div class="answer-card-back">
+            <div class="answer-card-icon">✨</div>
+            <div class="answer-card-label">Your Answer</div>
+            <div class="answer-card-value">${escHtml(correctAnswer)}</div>
+          </div>
         </div>
-        <div class="answer-card-back">
-          <div class="answer-card-icon">✨</div>
-          <div class="answer-card-label">Answer Revealed</div>
-          <div class="answer-card-value">${escHtml(correctAnswer)}</div>
-        </div>
-      </div>
-    </div>
-  </div>`;
-
-  // ═══ COMPARISON CARDS — hidden initially, shown after answer flip ═══
-  if (my) {
-    h += `<div class="answer-compare-row" id="compare-row" style="display:none">
-      <div class="answer-compare-card card-friend">
-        <div class="compare-card-icon">💬</div>
-        <div class="compare-card-label">Correct Answer</div>
-        <div class="compare-card-value">${escHtml(correctAnswer)}</div>
-      </div>
-      <div class="compare-vs">VS</div>
-      <div class="answer-compare-card card-mine" id="my-answer-card">
-        <div class="compare-card-icon">🎯</div>
-        <div class="compare-card-label">Your Guess</div>
-        <div class="compare-card-value">${escHtml(myGuess)}</div>
       </div>
     </div>`;
 
-    // Result score text — hidden initially
-    h += `<div class="compare-result-text" id="compare-result-text">
-      <div class="compare-result-label ${resultClass}">${resultLabel}</div>
-      <div class="compare-result-sub">${resultSub}</div>
-    </div>`;
-  }
+    // All guesses with comparison — ONLY for question creator
+    h += `<div class="results-card"><h4>All Guesses</h4>`;
+    Object.values(results).forEach(r => {
+      h += `<div class="result-row">
+        <span class="rr-name">${escHtml(r.playerName)}</span>
+        <span class="rr-guess">${escHtml(r.guess||'—')}</span>
+        <span class="rr-score-slot phase-hidden">${matchScoreLabel(r)}</span>
+        <span class="rr-badge-slot phase-hidden">${matchBadge(r)}</span>
+      </div>`;
+    });
+    h += '</div>';
 
-  // Results card — all players' guesses with scores/badges hidden
-  h += `<div class="results-card"><h4>All Guesses</h4>`;
-  Object.values(results).forEach(r => {
-    h += `<div class="result-row">
-      <span class="rr-name">${escHtml(r.playerName)}</span>
-      <span class="rr-guess">${escHtml(r.guess||'—')}</span>
-      <span class="rr-score-slot phase-hidden">${matchScoreLabel(r)}</span>
-      <span class="rr-badge-slot phase-hidden">${matchBadge(r)}</span>
-    </div>`;
-  });
-  h += '</div>';
-
-  // ═══ ANSWER VISIBILITY FIX: Show BOTH answers for ALL players ═══
-  h += '<div class="both-answers-section" id="both-answers-section" style="display:none">';
-  h += '<div class="both-answers-title">👁️ All Answers Revealed</div>';
-  // Show creator's answer
-  h += `<div class="answer-pair">
-    <div class="answer-pair-card ap-creator">
-      <div class="ap-label">${escHtml(turnPlayerName || 'Creator')}'s Answer</div>
-      <div class="ap-value">${escHtml(correctAnswer)}</div>
-    </div>
-  </div>`;
-  // Show each guesser's answer
-  Object.values(results).forEach(r => {
+    // All answers revealed section — ONLY for creator
+    h += '<div class="both-answers-section" id="both-answers-section" style="display:none">';
+    h += '<div class="both-answers-title">👁️ All Answers Revealed</div>';
     h += `<div class="answer-pair">
-      <div class="answer-pair-card ap-guesser">
-        <div class="ap-label">${escHtml(r.playerName)}'s Guess</div>
-        <div class="ap-value">${escHtml(r.guess || '—')}</div>
+      <div class="answer-pair-card ap-creator">
+        <div class="ap-label">${escHtml(turnPlayerName || 'Creator')}'s Answer</div>
+        <div class="ap-value">${escHtml(correctAnswer)}</div>
       </div>
     </div>`;
-  });
-  h += '</div>';
+    Object.values(results).forEach(r => {
+      h += `<div class="answer-pair">
+        <div class="answer-pair-card ap-guesser">
+          <div class="ap-label">${escHtml(r.playerName)}'s Guess</div>
+          <div class="ap-value">${escHtml(r.guess || '—')}</div>
+        </div>
+      </div>`;
+    });
+    h += '</div>';
+
+  } else {
+    // ════════════════════════════════════════════════════════════
+    // GUESSER VIEW: Simple result — only their own guess vs answer
+    // ════════════════════════════════════════════════════════════
+    h += `<div class="game-question-display"><div class="q-label">Question</div><div class="q-text">${escHtml(question)}</div></div>`;
+
+    // Answer card — flip to reveal
+    h += `<div class="answer-card-wrapper">
+      <div class="answer-card" id="answer-card-reveal">
+        <div class="answer-card-inner">
+          <div class="answer-card-front">
+            <div class="answer-card-icon">🔒</div>
+            <div class="answer-card-label">Answer Hidden</div>
+            <div class="answer-card-masked">• • • • •</div>
+          </div>
+          <div class="answer-card-back">
+            <div class="answer-card-icon">✨</div>
+            <div class="answer-card-label">Answer Revealed</div>
+            <div class="answer-card-value">${escHtml(correctAnswer)}</div>
+          </div>
+        </div>
+      </div>
+    </div>`;
+
+    // Comparison cards — only for guessers who submitted
+    if (my) {
+      h += `<div class="answer-compare-row" id="compare-row" style="display:none">
+        <div class="answer-compare-card card-friend">
+          <div class="compare-card-icon">💬</div>
+          <div class="compare-card-label">Correct Answer</div>
+          <div class="compare-card-value">${escHtml(correctAnswer)}</div>
+        </div>
+        <div class="compare-vs">VS</div>
+        <div class="answer-compare-card card-mine" id="my-answer-card">
+          <div class="compare-card-icon">🎯</div>
+          <div class="compare-card-label">Your Guess</div>
+          <div class="compare-card-value">${escHtml(myGuess)}</div>
+        </div>
+      </div>`;
+
+      // Result score text
+      h += `<div class="compare-result-text" id="compare-result-text">
+        <div class="compare-result-label ${resultClass}">${resultLabel}</div>
+        <div class="compare-result-sub">${resultSub}</div>
+      </div>`;
+    }
+
+    // Simple scoreboard — no detailed badge/score breakdown for guessers
+    h += `<div class="results-card" id="simple-results" style="display:none"><h4>Results</h4>`;
+    Object.values(results).forEach(r => {
+      const icon = r.matchType === 'exact' ? '🔥' : r.matchType === 'partial' ? '👍' : '❌';
+      h += `<div class="result-row">
+        <span class="rr-name">${escHtml(r.playerName)}</span>
+        <span class="rr-guess">${escHtml(r.guess||'—')}</span>
+        <span class="rr-score-slot">${icon}</span>
+      </div>`;
+    });
+    h += '</div>';
+  }
 
   $('#game-content').innerHTML = h;
 
@@ -879,7 +924,7 @@ socket.on('guess-results', ({ results, correctAnswer, question, scores, anyCorre
   }, 800);
 
   // ═══════════════════════════════════════════════════════════
-  // PHASE 2.5 (1800ms): Show comparison cards (neutral colors)
+  // PHASE 2.5 (1800ms): Show comparison cards (guesser) or comparison rows (creator)
   // ═══════════════════════════════════════════════════════════
   setTimeout(() => {
     const row = document.getElementById('compare-row');
@@ -890,33 +935,41 @@ socket.on('guess-results', ({ results, correctAnswer, question, scores, anyCorre
   // PHASE 3 (3500ms): Apply color feedback + reveal scores
   // ═══════════════════════════════════════════════════════════
   setTimeout(() => {
-    // Apply color feedback to "Your Answer" card
-    const myCard = document.getElementById('my-answer-card');
-    if (myCard) {
-      myCard.classList.add(`match-result-${myMatchType}`);
+    if (isQuestionCreator) {
+      // Creator: reveal all score badges
+      document.querySelectorAll('.phase-hidden').forEach(el => {
+        el.classList.remove('phase-hidden');
+        el.classList.add('phase-reveal');
+      });
+      // Show both answers section
+      const bothSection = document.getElementById('both-answers-section');
+      if (bothSection) bothSection.style.display = 'block';
+    } else {
+      // Guesser: apply color to their answer card + reveal result text
+      const myCard = document.getElementById('my-answer-card');
+      if (myCard) myCard.classList.add(`match-result-${myMatchType}`);
+
+      const resultText = document.getElementById('compare-result-text');
+      if (resultText) resultText.classList.add('revealed');
+
+      // Show simple results card
+      const simpleResults = document.getElementById('simple-results');
+      if (simpleResults) simpleResults.style.display = 'block';
     }
 
-    // Reveal the result text with bounce animation
-    const resultText = document.getElementById('compare-result-text');
-    if (resultText) resultText.classList.add('revealed');
-
-    // Reveal all hidden score/badge elements in result rows
-    document.querySelectorAll('.phase-hidden').forEach(el => {
-      el.classList.remove('phase-hidden');
-      el.classList.add('phase-reveal');
-    });
-
-    // ANSWER VISIBILITY: Show both answers section for ALL players
-    const bothSection = document.getElementById('both-answers-section');
-    if (bothSection) bothSection.style.display = 'block';
-
     // Sound effects based on match result
-    if (my?.matchType === 'exact') playSoundPack('correct');
-    else if (my?.matchType === 'partial') sfx('click');
-    else if (my) playSoundPack('wrong');
+    if (isQuestionCreator) {
+      sfx('click');
+    } else if (my?.matchType === 'exact') {
+      playSoundPack('correct');
+    } else if (my?.matchType === 'partial') {
+      sfx('click');
+    } else if (my) {
+      playSoundPack('wrong');
+    }
 
-    // ─── COIN EARNING: matchScore from server already includes bonus (+3 for perfect) ───
-    if (my && my.matchScore > 0) {
+    // ─── COIN EARNING: Only for guessers, matchScore from server already includes bonus ───
+    if (!isQuestionCreator && my && my.matchScore > 0) {
       let earned = state.doubleNext ? my.matchScore * 2 : my.matchScore;
       state.doubleNext = false;
       addCoins(earned);
@@ -931,9 +984,6 @@ socket.on('guess-results', ({ results, correctAnswer, question, scores, anyCorre
     // Update leaderboard data
     if (anyCorrect) updateLB(scores, results);
   }, 3500);
-  // NOTE: Colors are applied via classList.add and will PERSIST
-  // until the server sends the next room-state (at ~10s), which
-  // replaces game-content innerHTML. No early clearing occurs.
 
   // ═══════════════════════════════════════════════════════════
   // PHASE 4 (6500ms): Show leaderboard briefly if someone scored
@@ -1441,6 +1491,14 @@ socket.on('share-pack-success', ({ packId, name }) => {
   showToast(`📤 Pack "${name}" published to marketplace!`, 3000);
 });
 socket.on('share-pack-error', msg => showToast('❌ ' + msg));
+// Auto-refresh marketplace when any player publishes a new pack
+socket.on('packs-updated', () => {
+  // If marketplace tab is currently visible, refresh it
+  const mpList = $('#qp-marketplace-list');
+  if (mpList && mpList.offsetParent !== null) {
+    renderMarketplace();
+  }
+});
 
 // ─── MARKETPLACE: Browse & Buy shared packs from all players ───
 function renderMarketplace() {
