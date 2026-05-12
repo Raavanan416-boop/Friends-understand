@@ -44,6 +44,14 @@ const playerProfiles = {}; // playerName -> { name, avatar, coins, matches, wins
 const sharedPacks = {};    // packId -> { id, creatorName, name, questions[], price, buyers[] }
 let nextPackId = 1;
 
+// ─── Reconnection Tracking ──────────────────────────────────
+const RECONNECT_TIMEOUT_MS = 15000; // 15 seconds grace period
+const reconnectTimers = {};   // socketId -> timeout ref
+const disconnectedPlayers = {}; // playerName -> { roomCode, score, socketId, disconnectedAt, avatar }
+
+// ─── Broadcast Debounce ─────────────────────────────────────
+const broadcastDebounce = {};  // roomCode -> timeout ref
+
 // ─── Question Pack Definitions ───
 const PACK_QUESTIONS = {
   love: [
@@ -79,22 +87,35 @@ function getActivePlayers(room) {
   return room.players.filter(p => p.connected && p.isActive !== false);
 }
 
+// Get players who are active OR reconnecting (for player count checks during grace period)
+function getActiveOrReconnectingPlayers(room) {
+  return room.players.filter(p => (p.connected && p.isActive !== false) || p.reconnecting === true);
+}
+
 // Legacy helper — keep backward compat but use isActive check
 function getConnectedPlayers(room) {
   return getActivePlayers(room);
 }
 
 function broadcastRoomState(roomCode) {
+  // Debounce broadcasts to avoid flooding slow connections
+  if (broadcastDebounce[roomCode]) clearTimeout(broadcastDebounce[roomCode]);
+  broadcastDebounce[roomCode] = setTimeout(() => _doBroadcastRoomState(roomCode), 50);
+}
+
+function _doBroadcastRoomState(roomCode) {
   const room = rooms[roomCode];
   if (!room) return;
   const activePlayers = getActivePlayers(room);
-  const players = activePlayers.map(p => ({
+  const allRelevant = getActiveOrReconnectingPlayers(room);
+  const players = allRelevant.map(p => ({
     id: p.id,
     name: p.name,
     avatar: p.avatar,
     score: p.score,
     isHost: p.isHost,
-    connected: p.connected
+    connected: p.connected,
+    reconnecting: p.reconnecting || false
   }));
 
   // Use the pre-selected pack question stored in room (set during startQuestionPhase)
@@ -113,6 +134,18 @@ function broadcastRoomState(roomCode) {
     } else if (qp.startsWith('custom-')) {
       packDisplayName = room.packDisplayName || 'Custom Pack';
     }
+  }
+
+  // ═══ SAVE GAME STATE for reconnection ═══
+  if (room.phase !== 'waiting' && room.phase !== 'gameEnd') {
+    room.savedGameState = {
+      round: room.currentRound,
+      timer: room.timerEnd,
+      scores: activePlayers.map(p => ({ id: p.id, name: p.name, score: p.score })),
+      currentQuestion: room.currentQuestion,
+      phase: room.phase,
+      savedAt: Date.now()
+    };
   }
 
   io.to(roomCode).emit('room-state', {
@@ -580,15 +613,178 @@ io.on('connection', (socket) => {
 
   // ── Leave Room (explicit) ──
   socket.on('leave-room', ({ roomCode }) => {
+    // Explicit leave = no reconnect chance
+    const info = playerSockets[socket.id];
+    if (info) {
+      // Clear any reconnect tracking for this player
+      delete disconnectedPlayers[info.playerName];
+      if (reconnectTimers[socket.id]) {
+        clearTimeout(reconnectTimers[socket.id]);
+        delete reconnectTimers[socket.id];
+      }
+    }
     handleLeave(socket, roomCode, false);
   });
 
-  // ── Disconnect ──
+  // ── Disconnect (network drop — give reconnect chance) ──
   socket.on('disconnect', () => {
     console.log(`[-] Disconnected: ${socket.id}`);
     const info = playerSockets[socket.id];
-    if (info) {
-      handleLeave(socket, info.roomCode, true);
+    if (!info) return;
+
+    const room = rooms[info.roomCode];
+    if (!room) {
+      delete playerSockets[socket.id];
+      return;
+    }
+
+    const player = room.players.find(p => p.id === socket.id);
+    if (!player) {
+      delete playerSockets[socket.id];
+      return;
+    }
+
+    // ═══ RECONNECT GRACE PERIOD: Don't remove instantly ═══
+    // Mark player as reconnecting, NOT as disconnected
+    player.connected = false;
+    player.reconnecting = true;
+
+    // Save reconnect data
+    disconnectedPlayers[info.playerName] = {
+      roomCode: info.roomCode,
+      score: player.score,
+      socketId: socket.id,
+      avatar: info.avatar,
+      disconnectedAt: Date.now(),
+      isHost: player.isHost
+    };
+
+    // Notify room that player is reconnecting
+    io.to(info.roomCode).emit('player-reconnecting', {
+      playerName: info.playerName,
+      timeoutMs: RECONNECT_TIMEOUT_MS
+    });
+
+    broadcastRoomState(info.roomCode);
+    console.log(`[Reconnect] ${info.playerName} marked as reconnecting (${RECONNECT_TIMEOUT_MS/1000}s grace)`);
+
+    // Set timeout: if not reconnected in 15 seconds, remove fully
+    reconnectTimers[socket.id] = setTimeout(() => {
+      delete reconnectTimers[socket.id];
+      // Check if player actually reconnected
+      const reData = disconnectedPlayers[info.playerName];
+      if (reData && reData.socketId === socket.id) {
+        // Player did NOT reconnect — remove them
+        console.log(`[Reconnect] ${info.playerName} did NOT reconnect. Removing.`);
+        delete disconnectedPlayers[info.playerName];
+
+        // Mark player fully inactive
+        const currentRoom = rooms[info.roomCode];
+        if (currentRoom) {
+          const p = currentRoom.players.find(pp => pp.id === socket.id);
+          if (p) {
+            p.reconnecting = false;
+            p.connected = false;
+            p.isActive = false;
+          }
+          // Now do the full leave logic
+          handleLeave(socket, info.roomCode, true);
+        }
+      }
+    }, RECONNECT_TIMEOUT_MS);
+  });
+
+  // ── Reconnect: Player rejoins after disconnect ──
+  socket.on('rejoin-room', ({ roomCode, playerName, avatar }) => {
+    const reData = disconnectedPlayers[playerName];
+    if (!reData || reData.roomCode !== roomCode) {
+      return socket.emit('rejoin-error', 'No active session found');
+    }
+
+    const room = rooms[roomCode];
+    if (!room) {
+      delete disconnectedPlayers[playerName];
+      return socket.emit('rejoin-error', 'Room no longer exists');
+    }
+
+    // Cancel the removal timeout
+    if (reconnectTimers[reData.socketId]) {
+      clearTimeout(reconnectTimers[reData.socketId]);
+      delete reconnectTimers[reData.socketId];
+    }
+
+    // Find the player entry and update with new socket ID
+    const existingPlayer = room.players.find(p => p.name === playerName);
+    if (existingPlayer) {
+      const oldSocketId = existingPlayer.id;
+      existingPlayer.id = socket.id;
+      existingPlayer.connected = true;
+      existingPlayer.reconnecting = false;
+      existingPlayer.isActive = true;
+      existingPlayer.avatar = avatar || existingPlayer.avatar;
+      // Restore score
+      existingPlayer.score = reData.score;
+
+      // Update playerSockets mapping
+      delete playerSockets[oldSocketId];
+      playerSockets[socket.id] = { roomCode, playerName, avatar: existingPlayer.avatar };
+
+      // Update guesses mapping if needed
+      if (room.guesses && room.guesses[oldSocketId]) {
+        room.guesses[socket.id] = room.guesses[oldSocketId];
+        delete room.guesses[oldSocketId];
+      }
+    } else {
+      // Player was already fully removed, re-add
+      const player = {
+        id: socket.id,
+        name: playerName,
+        avatar: avatar || reData.avatar || '😀',
+        score: reData.score || 0,
+        isHost: reData.isHost && !room.players.some(p => p.isHost),
+        connected: true,
+        isActive: true,
+        reconnecting: false
+      };
+      room.players.push(player);
+      playerSockets[socket.id] = { roomCode, playerName, avatar: player.avatar };
+    }
+
+    // Clean up reconnect data
+    delete disconnectedPlayers[playerName];
+    delete leftPlayers[socket.id];
+
+    socket.join(roomCode);
+
+    // Send rejoin success with game state
+    socket.emit('rejoin-success', {
+      roomCode,
+      gameState: room.savedGameState || null,
+      phase: room.phase,
+      currentRound: room.currentRound,
+      totalRounds: room.totalRounds
+    });
+
+    // Notify room
+    io.to(roomCode).emit('player-reconnected', {
+      playerName: playerName
+    });
+
+    broadcastRoomState(roomCode);
+    io.emit('rooms-updated');
+    console.log(`[Reconnect] ${playerName} successfully reconnected to ${roomCode}`);
+  });
+
+  // ── Check reconnect availability ──
+  socket.on('check-rejoin', ({ playerName }) => {
+    const reData = disconnectedPlayers[playerName];
+    if (reData && rooms[reData.roomCode]) {
+      socket.emit('rejoin-available', {
+        roomCode: reData.roomCode,
+        roomName: rooms[reData.roomCode].roomName || reData.roomCode,
+        score: reData.score,
+        phase: rooms[reData.roomCode].phase
+      });
     }
   });
 });
@@ -1126,15 +1322,29 @@ function cleanupRoom(roomCode) {
   if (!room) return;
   clearTimeout(room.timerRef);
   if (room.timerSyncRef) { clearInterval(room.timerSyncRef); room.timerSyncRef = null; }
+  // Clean up all player references and reconnect data
   room.players.forEach(p => {
     delete playerSockets[p.id];
+    // Also clear any reconnect tracking for these players
+    if (reconnectTimers[p.id]) {
+      clearTimeout(reconnectTimers[p.id]);
+      delete reconnectTimers[p.id];
+    }
+    // Remove from disconnectedPlayers by name
+    if (p.name && disconnectedPlayers[p.name]) {
+      delete disconnectedPlayers[p.name];
+    }
   });
   delete rooms[roomCode];
+  if (broadcastDebounce[roomCode]) {
+    clearTimeout(broadcastDebounce[roomCode]);
+    delete broadcastDebounce[roomCode];
+  }
   io.emit('rooms-updated');
   console.log(`[Room] ${roomCode} cleaned up`);
 }
 
-// ─── CRITICAL: Handle Leave (explicit leave OR disconnect) ───
+// ─── CRITICAL: Handle Leave (explicit leave OR timeout disconnect) ───
 function handleLeave(socket, roomCode, isDisconnect = false) {
   const room = rooms[roomCode];
   if (!room) {
@@ -1142,7 +1352,7 @@ function handleLeave(socket, roomCode, isDisconnect = false) {
     return;
   }
 
-  const playerIndex = room.players.findIndex(p => p.id === socket.id);
+  const playerIndex = room.players.findIndex(p => p.id === socket.id || (p.reconnecting && p.name === playerSockets[socket.id]?.playerName));
   if (playerIndex === -1) {
     delete playerSockets[socket.id];
     return;
@@ -1155,6 +1365,7 @@ function handleLeave(socket, roomCode, isDisconnect = false) {
   // ═══ STEP 1: Mark player as COMPLETELY INACTIVE ═══
   leavingPlayer.isActive = false;
   leavingPlayer.connected = false;
+  leavingPlayer.reconnecting = false;
 
   // ═══ STEP 2: Track this player as LEFT to prevent auto-rejoin ═══
   leftPlayers[socket.id] = true;
@@ -1308,6 +1519,31 @@ function handleLeave(socket, roomCode, isDisconnect = false) {
   broadcastRoomState(roomCode);
   io.emit('rooms-updated');
 }
+
+// ─── Periodic Room Cleanup (every 60 seconds) ───────────────
+setInterval(() => {
+  const now = Date.now();
+  Object.entries(rooms).forEach(([code, room]) => {
+    const active = getActivePlayers(room);
+    const reconnecting = room.players.filter(p => p.reconnecting);
+    // Room is completely empty (no active + no reconnecting)
+    if (active.length === 0 && reconnecting.length === 0) {
+      console.log(`[Cleanup] Removing ghost room ${code} (0 players)`);
+      cleanupRoom(code);
+    }
+  });
+  // Clean up stale disconnectedPlayers entries (older than 60s)
+  Object.entries(disconnectedPlayers).forEach(([name, data]) => {
+    if (now - data.disconnectedAt > 60000) {
+      console.log(`[Cleanup] Removing stale reconnect data for ${name}`);
+      if (reconnectTimers[data.socketId]) {
+        clearTimeout(reconnectTimers[data.socketId]);
+        delete reconnectTimers[data.socketId];
+      }
+      delete disconnectedPlayers[name];
+    }
+  });
+}, 60000);
 
 // ─── Start Server ────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;

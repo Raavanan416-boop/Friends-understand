@@ -72,6 +72,9 @@
           <span class="coin-icon secret-coin-trigger" id="secret-coin-tap">💰</span>
           <span class="coin-count" id="home-coin-count">0</span>
         </div>
+        <div class="iq-badge iq-fast" id="iq-badge-home" title="Internet Status">
+          <span class="iq-dot"></span><span class="iq-label">Fast</span>
+        </div>
         <button class="icon-btn world-lb-btn" id="btn-world-lb" title="World Leaderboard">🌍</button>
         <button class="icon-btn menu-hamburger" id="btn-menu-toggle" title="Menu">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
@@ -494,6 +497,9 @@
           <span class="coin-icon">💰</span>
           <span class="coin-count" id="game-coin-count">0</span>
         </div>
+        <div class="iq-badge iq-fast" id="iq-badge-game" title="Internet Status">
+          <span class="iq-dot"></span><span class="iq-label">Fast</span>
+        </div>
       </div>
       <div class="game-top-right">
         <button class="game-top-btn" id="btn-players-list" title="Players">👥</button>
@@ -616,6 +622,36 @@
         <button class="confirm-modal-btn confirm-no" id="confirm-modal-no">No</button>
       </div>
     </div>
+  </div>
+
+  <!-- Rejoin Game Popup -->
+  <div class="popup-overlay" id="popup-rejoin">
+    <div class="popup-card glass-card popup-rejoin-card">
+      <div class="rejoin-icon">🔄</div>
+      <h3>Rejoin Current Game?</h3>
+      <p class="rejoin-room-label">Room: <strong id="rejoin-room-name">---</strong></p>
+      <p class="rejoin-info" id="rejoin-score-text">Your score: 0 pts</p>
+      <p class="rejoin-info rejoin-phase" id="rejoin-phase-text">Game is in: guess</p>
+      <div class="popup-actions">
+        <button class="btn-primary btn-neon" id="btn-rejoin-yes">✅ Yes, Rejoin</button>
+        <button class="btn-secondary" id="btn-rejoin-no">❌ No, Leave</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Internet Detail Popup (click to expand) -->
+  <div class="iq-expand-overlay" id="iq-expand-overlay">
+    <div class="iq-expand-card" id="iq-expand-card">
+      <div class="iq-expand-icon" id="iq-expand-icon">📶</div>
+      <div class="iq-expand-title" id="iq-expand-title">Fast Internet</div>
+      <div class="iq-expand-detail" id="iq-expand-detail">Speed: -- Mbps</div>
+      <div class="iq-expand-sub" id="iq-expand-sub"></div>
+    </div>
+  </div>
+
+  <!-- Low Data Mode Popup (center, auto-hide 5s) -->
+  <div class="low-data-popup" id="low-data-popup" style="display:none">
+    Low Data Mode Enabled 🚀
   </div>
 
   <!-- Toast -->

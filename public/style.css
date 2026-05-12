@@ -398,8 +398,17 @@ body{background:linear-gradient(135deg,#0b0b2a 0%,#1a1040 40%,#0d2137 70%,#1a0a3
 .emoji-btn:hover{transform:scale(1.25)}
 .emoji-btn:active{transform:scale(.85)}
 #emoji-float-container{position:fixed;inset:0;pointer-events:none;z-index:500;overflow:hidden}
-.floating-emoji{position:absolute;font-size:32px;animation:emojiFloat 2s ease-out forwards}
-@keyframes emojiFloat{0%{opacity:1;transform:translateY(0) scale(1) rotate(0)}100%{opacity:0;transform:translateY(-200px) scale(1.5) rotate(25deg)}}
+.floating-emoji{
+  position:absolute;font-size:32px;
+  animation:emojiFloat 1.8s ease forwards;
+  will-change:transform,opacity
+}
+@keyframes emojiFloat{
+  0%{transform:translateY(20px) scale(0.8);opacity:0}
+  20%{opacity:1}
+  50%{transform:translateY(-10px) scale(1);opacity:1}
+  100%{transform:translateY(-60px) scale(1.1);opacity:0}
+}
 
 /* ═══ POPUPS ═══ */
 .popup-overlay{position:fixed;inset:0;z-index:300;background:rgba(0,0,0,.65);backdrop-filter:blur(6px);display:none;align-items:center;justify-content:center;padding:24px}
@@ -960,3 +969,227 @@ body{background:linear-gradient(135deg,#0b0b2a 0%,#1a1040 40%,#0d2137 70%,#1a0a3
 .advantage-btn.adv-freeze:hover:not(:disabled){background:linear-gradient(135deg,rgba(77,208,225,.2),rgba(0,188,212,.1));border-color:rgba(77,208,225,.5);box-shadow:0 4px 15px rgba(77,208,225,.2)}
 .advantage-btn.adv-autohint{border-color:rgba(255,193,7,.25);background:linear-gradient(135deg,rgba(255,193,7,.08),rgba(255,152,0,.04));color:#ffc107}
 .advantage-btn.adv-autohint:hover:not(:disabled){background:linear-gradient(135deg,rgba(255,193,7,.2),rgba(255,152,0,.1));border-color:rgba(255,193,7,.5);box-shadow:0 4px 15px rgba(255,193,7,.2)}
+
+/* ═══════════════════════════════════════════════════════════════
+   ═══ INTERNET QUALITY BADGE — inline beside coin icon ═══
+   ═══════════════════════════════════════════════════════════════ */
+.iq-badge{
+  display:flex;align-items:center;justify-content:center;
+  gap:5px;
+  padding:4px 10px;
+  border-radius:14px;
+  font-size:11px;font-weight:600;
+  opacity:.85;
+  cursor:pointer;
+  transition:all .3s ease;
+  white-space:nowrap;
+  user-select:none;
+  -webkit-tap-highlight-color:transparent
+}
+.iq-badge:active{transform:scale(.92);opacity:1}
+
+.iq-dot{
+  width:7px;height:7px;
+  border-radius:50%;
+  flex-shrink:0
+}
+.iq-label{font-size:10px;letter-spacing:.3px}
+
+/* Fast — soft green */
+.iq-badge.iq-fast{
+  background:rgba(200,240,210,.15);
+  color:rgba(130,220,150,1);
+  border:1px solid rgba(130,220,150,.2)
+}
+.iq-badge.iq-fast .iq-dot{
+  background:rgba(130,220,150,1);
+  box-shadow:0 0 4px rgba(130,220,150,.4)
+}
+
+/* Medium — soft yellow */
+.iq-badge.iq-medium{
+  background:rgba(255,240,200,.15);
+  color:rgba(240,200,100,1);
+  border:1px solid rgba(240,200,100,.2)
+}
+.iq-badge.iq-medium .iq-dot{
+  background:rgba(240,200,100,1);
+  box-shadow:0 0 4px rgba(240,200,100,.4)
+}
+
+/* Slow — soft red */
+.iq-badge.iq-slow{
+  background:rgba(255,210,210,.12);
+  color:rgba(240,140,140,1);
+  border:1px solid rgba(240,140,140,.2)
+}
+.iq-badge.iq-slow .iq-dot{
+  background:rgba(240,140,140,1);
+  box-shadow:0 0 4px rgba(240,140,140,.4);
+  animation:iqDotBlink 1.8s ease-in-out infinite
+}
+@keyframes iqDotBlink{
+  0%,100%{opacity:1}
+  50%{opacity:.35}
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   ═══ INTERNET EXPAND POPUP — click to show details ═══
+   ═══════════════════════════════════════════════════════════════ */
+.iq-expand-overlay{
+  position:fixed;inset:0;
+  z-index:10000;
+  background:rgba(0,0,0,.35);
+  display:none;align-items:center;justify-content:center;
+  padding:24px;
+  animation:iqOverlayIn .2s ease
+}
+.iq-expand-overlay.open{display:flex}
+@keyframes iqOverlayIn{from{opacity:0}to{opacity:1}}
+
+.iq-expand-card{
+  background:rgba(30,30,60,.85);
+  backdrop-filter:blur(16px);
+  -webkit-backdrop-filter:blur(16px);
+  border:1px solid rgba(255,255,255,.08);
+  border-radius:20px;
+  padding:24px 28px;
+  text-align:center;
+  min-width:220px;
+  max-width:280px;
+  animation:iqCardPop .25s cubic-bezier(.22,1,.36,1)
+}
+@keyframes iqCardPop{from{transform:scale(.85);opacity:0}to{transform:scale(1);opacity:1}}
+
+.iq-expand-icon{font-size:36px;margin-bottom:6px}
+.iq-expand-title{
+  font-size:16px;font-weight:800;
+  margin-bottom:4px;
+  color:var(--text1,#fff)
+}
+.iq-expand-detail{
+  font-size:13px;font-weight:500;
+  color:var(--text2,rgba(255,255,255,.6));
+  margin-bottom:2px
+}
+.iq-expand-sub{
+  font-size:11px;font-weight:600;
+  margin-top:6px;
+  padding:4px 12px;
+  border-radius:10px;
+  display:inline-block
+}
+.iq-expand-sub:empty{display:none}
+.iq-expand-sub.iq-sub-low{
+  background:rgba(240,140,140,.12);
+  color:rgba(240,140,140,1);
+  border:1px solid rgba(240,140,140,.15)
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   ═══ LOW DATA MODE POPUP — center, auto-hide 5s ═══
+   ═══════════════════════════════════════════════════════════════ */
+.low-data-popup{
+  position:fixed;
+  top:50%;left:50%;
+  transform:translate(-50%,-50%);
+  padding:14px 26px;
+  border-radius:18px;
+  background:rgba(255,255,255,.1);
+  backdrop-filter:blur(12px);
+  -webkit-backdrop-filter:blur(12px);
+  border:1px solid rgba(255,255,255,.1);
+  font-size:14px;font-weight:700;
+  color:rgba(255,255,255,.85);
+  z-index:9999;
+  pointer-events:none;
+  white-space:nowrap;
+  animation:ldPopIn .4s ease
+}
+@keyframes ldPopIn{
+  from{opacity:0;transform:translate(-50%,-50%) scale(.85)}
+  to{opacity:1;transform:translate(-50%,-50%) scale(1)}
+}
+.low-data-popup.hiding{
+  animation:ldPopOut .4s ease forwards
+}
+@keyframes ldPopOut{
+  from{opacity:1;transform:translate(-50%,-50%) scale(1)}
+  to{opacity:0;transform:translate(-50%,-50%) scale(.85)}
+}
+
+/* ── Low Data Mode: performance overrides ── */
+body.low-data-mode .login-orb,
+body.low-data-mode .coin-rain,
+body.low-data-mode .coin-float{
+  display:none!important
+}
+body.low-data-mode .glass-card{
+  backdrop-filter:blur(4px)!important;
+  -webkit-backdrop-filter:blur(4px)!important
+}
+body.low-data-mode .floating-emoji{
+  animation-duration:1s!important
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   ═══ REJOIN GAME POPUP ═══
+   ═══════════════════════════════════════════════════════════════ */
+.popup-rejoin-card{
+  text-align:center;
+  max-width:340px
+}
+.rejoin-icon{
+  font-size:56px;
+  margin-bottom:8px;
+  animation:rejoinSpin 2s linear infinite
+}
+@keyframes rejoinSpin{
+  from{transform:rotate(0deg)}
+  to{transform:rotate(360deg)}
+}
+.rejoin-room-label{
+  font-size:14px;color:var(--text2);margin:8px 0 4px
+}
+.rejoin-room-label strong{
+  color:var(--accent);font-weight:800
+}
+.rejoin-info{
+  font-size:12px;color:var(--text3);margin:4px 0
+}
+.rejoin-phase{
+  background:linear-gradient(135deg,rgba(108,92,231,.1),rgba(162,155,254,.05));
+  padding:6px 14px;border-radius:12px;
+  display:inline-block;margin:8px 0 12px;
+  border:1px solid rgba(108,92,231,.2);
+  font-weight:600;color:var(--accent)
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   ═══ RECONNECTING PLAYER VISUAL STATE ═══
+   ═══════════════════════════════════════════════════════════════ */
+.waiting-player.wp-reconnecting{
+  opacity:.5;
+  position:relative;
+  border:1px dashed rgba(255,193,7,.4)
+}
+.waiting-player.wp-reconnecting::after{
+  content:'Reconnecting...';
+  position:absolute;
+  bottom:-2px;right:8px;
+  font-size:9px;
+  color:#ffc107;
+  font-weight:700;
+  letter-spacing:.5px;
+  text-transform:uppercase;
+  animation:reconnectBlink 1.5s ease-in-out infinite
+}
+.wp-reconnect-badge{
+  font-size:14px;
+  animation:reconnectBlink 1.5s ease-in-out infinite;
+  display:inline-block;margin-left:4px
+}
+@keyframes reconnectBlink{
+  0%,100%{opacity:1}
+  50%{opacity:.3}
+}

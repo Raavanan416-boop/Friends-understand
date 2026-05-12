@@ -14,7 +14,13 @@
 firebase.initializeApp(firebaseConfig);
 const db = firebase.database();
 
-const socket = io();
+const socket = io({
+  reconnection: true,
+  reconnectionAttempts: 10,
+  reconnectionDelay: 1000,
+  reconnectionDelayMax: 5000,
+  timeout: 20000
+});
 const AVATARS = ['😀','😎','🤩','🥳','😈','👻','🤖','👽','🦊','🐱','🐶','🦁','🐸','🐧','🦄','🌟','🔥','💎','🎯','🎮','🐵','🐷','🐃','🐐','🐻'];
 const SOUNDS = {};
 let isInGame = false; // Track game state for shop restriction
@@ -71,14 +77,14 @@ function syncPlayerToFirebase() {
   _syncTimer = setTimeout(() => {
     const pid = getPlayerId();
     if (!pid) return;
-    db.ref('players/' + pid).update({
+    debouncedFirebaseWrite('players/' + pid, {
       name: state.playerName,
       avatar: state.avatar,
       coins: state.coins,
       inventory: loadInventory(),
       lastSeen: Date.now()
-    }).catch(() => {});
-  }, 300);
+    }, lowDataMode ? 1000 : 300);
+  }, lowDataMode ? 600 : 300);
 }
 
 function loadPlayerFromFirebase(callback) {
@@ -187,6 +193,172 @@ let state = {
   usedAnyAdvantage: false,
   doubleNext: false
 };
+
+// ─── Internet Quality Detection ───
+let internetQuality = 'fast'; // 'fast' | 'medium' | 'slow'
+let lowDataMode = false;
+let _lastLowDataShown = 0; // prevent spamming the popup
+let _internetMbps = 0;      // store for expand popup
+
+function detectInternetQuality() {
+  const prevQuality = internetQuality;
+  const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+  if (conn && conn.downlink !== undefined) {
+    _internetMbps = conn.downlink;
+    if (_internetMbps > 5) {
+      internetQuality = 'fast';
+      lowDataMode = false;
+    } else if (_internetMbps >= 2) {
+      internetQuality = 'medium';
+      lowDataMode = false;
+    } else {
+      internetQuality = 'slow';
+      lowDataMode = true;
+    }
+  } else {
+    // Fallback: ping-based detection
+    const start = Date.now();
+    fetch('/api/rooms', { cache: 'no-store' }).then(() => {
+      const latency = Date.now() - start;
+      _internetMbps = Math.round(1000 / Math.max(latency, 1) * 10) / 10; // rough estimate
+      if (latency < 200) { internetQuality = 'fast'; lowDataMode = false; }
+      else if (latency < 600) { internetQuality = 'medium'; lowDataMode = false; }
+      else { internetQuality = 'slow'; lowDataMode = true; }
+      updateInternetUI();
+      if (internetQuality === 'slow' && prevQuality !== 'slow') showLowDataPopup();
+    }).catch(() => {
+      internetQuality = 'slow';
+      lowDataMode = true;
+      _internetMbps = 0;
+      updateInternetUI();
+      if (prevQuality !== 'slow') showLowDataPopup();
+    });
+  }
+  updateInternetUI();
+  applyLowDataMode();
+  // Show low-data popup only on state change to slow
+  if (internetQuality === 'slow' && prevQuality !== 'slow') {
+    showLowDataPopup();
+  }
+}
+
+function updateInternetUI() {
+  let label, cls;
+  switch(internetQuality) {
+    case 'fast':   label = 'Fast';   cls = 'iq-fast';   break;
+    case 'medium': label = 'Medium'; cls = 'iq-medium'; break;
+    case 'slow':   label = 'Slow';   cls = 'iq-slow';   break;
+  }
+  // Update both inline badges (home + game screen)
+  ['iq-badge-home', 'iq-badge-game'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.className = `iq-badge ${cls}`;
+    const labelEl = el.querySelector('.iq-label');
+    if (labelEl) labelEl.textContent = label;
+  });
+}
+
+function applyLowDataMode() {
+  if (lowDataMode) {
+    document.body.classList.add('low-data-mode');
+  } else {
+    document.body.classList.remove('low-data-mode');
+  }
+}
+
+// ─── Low Data Popup (centered, auto-hide 5s) ───
+function showLowDataPopup() {
+  const now = Date.now();
+  if (now - _lastLowDataShown < 30000) return; // don't spam, max once per 30s
+  _lastLowDataShown = now;
+  const popup = document.getElementById('low-data-popup');
+  if (!popup) return;
+  popup.classList.remove('hiding');
+  popup.style.display = 'block';
+  setTimeout(() => {
+    popup.classList.add('hiding');
+    setTimeout(() => { popup.style.display = 'none'; popup.classList.remove('hiding'); }, 400);
+  }, 5000);
+}
+
+// ─── Click-to-Expand Internet Details ───
+function openInternetExpand() {
+  const overlay = document.getElementById('iq-expand-overlay');
+  if (!overlay) return;
+
+  // Populate content
+  const iconEl = document.getElementById('iq-expand-icon');
+  const titleEl = document.getElementById('iq-expand-title');
+  const detailEl = document.getElementById('iq-expand-detail');
+  const subEl = document.getElementById('iq-expand-sub');
+
+  const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+  const speed = conn ? conn.downlink : _internetMbps;
+
+  switch(internetQuality) {
+    case 'fast':
+      iconEl.textContent = '📶';
+      titleEl.textContent = '🟢 Fast Internet';
+      titleEl.style.color = 'rgba(130,220,150,1)';
+      detailEl.textContent = `Speed: ${speed || '--'} Mbps`;
+      subEl.textContent = '';
+      subEl.className = 'iq-expand-sub';
+      break;
+    case 'medium':
+      iconEl.textContent = '📶';
+      titleEl.textContent = '🟡 Medium Internet';
+      titleEl.style.color = 'rgba(240,200,100,1)';
+      detailEl.textContent = `Speed: ${speed || '--'} Mbps`;
+      subEl.textContent = '';
+      subEl.className = 'iq-expand-sub';
+      break;
+    case 'slow':
+      iconEl.textContent = '📶';
+      titleEl.textContent = '🔴 Slow Internet';
+      titleEl.style.color = 'rgba(240,140,140,1)';
+      detailEl.textContent = `Speed: ${speed || '--'} Mbps`;
+      subEl.textContent = 'Low Data Mode Enabled';
+      subEl.className = 'iq-expand-sub iq-sub-low';
+      break;
+  }
+
+  overlay.classList.add('open');
+
+  // Close on outside click
+  const closeHandler = (e) => {
+    if (e.target === overlay) {
+      overlay.classList.remove('open');
+      overlay.removeEventListener('click', closeHandler);
+    }
+  };
+  overlay.addEventListener('click', closeHandler);
+}
+
+function setupInternetBadges() {
+  ['iq-badge-home', 'iq-badge-game'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.onclick = () => openInternetExpand();
+  });
+}
+
+// Run internet detection every 10 seconds
+setInterval(detectInternetQuality, 10000);
+
+// ─── Debounced Firebase Write (for slow internet) ───
+let _fbWriteQueue = {};
+let _fbWriteTimer = null;
+function debouncedFirebaseWrite(path, data, delay) {
+  const d = lowDataMode ? Math.max(delay || 500, 1000) : (delay || 300);
+  _fbWriteQueue[path] = data;
+  clearTimeout(_fbWriteTimer);
+  _fbWriteTimer = setTimeout(() => {
+    Object.entries(_fbWriteQueue).forEach(([p, val]) => {
+      db.ref(p).update(val).catch(() => {});
+    });
+    _fbWriteQueue = {};
+  }, d);
+}
 
 // ─── Coin Helpers ───
 function saveCoins() { localStorage.setItem('ms-coins', state.coins); syncPlayerToFirebase(); }
@@ -300,6 +472,10 @@ function initUI() {
   } else { showScreen('login'); }
   $('#btn-login').onclick = doLogin;
   $('#input-login-name').onkeydown = e => { if (e.key === 'Enter') doLogin(); };
+
+  // Start internet quality detection + wire badge clicks
+  detectInternetQuality();
+  setupInternetBadges();
 
   // Tabs
   $$('.tab-btn').forEach(b => b.onclick = () => switchTab(b.dataset.tab));
@@ -1018,7 +1194,87 @@ function renderGameContent(data) {
 }
 
 // ─── Socket Events ───
-socket.on('connect', () => { state.myId = socket.id; });
+socket.on('connect', () => {
+  state.myId = socket.id;
+  // Check if we can rejoin a game after reconnect
+  if (state.playerName) {
+    socket.emit('check-rejoin', { playerName: state.playerName });
+  }
+});
+
+// ─── Socket Reconnect Events ───
+socket.on('disconnect', () => {
+  showToast('⚠️ Connection lost. Reconnecting...', 4000);
+});
+
+socket.on('reconnect', () => {
+  showToast('✅ Reconnected!', 2000);
+  if (state.playerName && state.roomCode) {
+    // Try to rejoin the current room
+    socket.emit('rejoin-room', {
+      roomCode: state.roomCode,
+      playerName: state.playerName,
+      avatar: state.avatar
+    });
+  }
+});
+
+// ─── Rejoin Available (server found a session to resume) ───
+socket.on('rejoin-available', ({ roomCode, roomName, score, phase }) => {
+  // Show rejoin popup
+  const popup = document.getElementById('popup-rejoin');
+  if (!popup) return;
+  document.getElementById('rejoin-room-name').textContent = roomName || roomCode;
+  document.getElementById('rejoin-score-text').textContent = `Your score: ${score} pts`;
+  document.getElementById('rejoin-phase-text').textContent = `Game is in: ${phase}`;
+  popup.classList.add('open');
+
+  document.getElementById('btn-rejoin-yes').onclick = () => {
+    popup.classList.remove('open');
+    socket.emit('rejoin-room', {
+      roomCode,
+      playerName: state.playerName,
+      avatar: state.avatar
+    });
+    showToast('Rejoining game...', 2000);
+  };
+
+  document.getElementById('btn-rejoin-no').onclick = () => {
+    popup.classList.remove('open');
+    socket.emit('leave-room', { roomCode });
+    showToast('Left the game', 2000);
+  };
+});
+
+// ─── Rejoin Success ───
+socket.on('rejoin-success', ({ roomCode, gameState, phase, currentRound, totalRounds }) => {
+  state.roomCode = roomCode;
+  state.hasLeftRoom = false;
+  isInGame = true;
+  closeAllPopups();
+  if (phase === 'waiting') {
+    showScreen('waiting');
+  } else {
+    showScreen('game');
+  }
+  showToast('✅ Reconnected to game!', 2500);
+  sfx('correct');
+});
+
+socket.on('rejoin-error', (msg) => {
+  showToast('❌ ' + msg, 3000);
+});
+
+// ─── Player Reconnecting (someone is trying to come back) ───
+socket.on('player-reconnecting', ({ playerName, timeoutMs }) => {
+  showToast(`⏳ ${playerName} disconnected. Waiting ${Math.round(timeoutMs/1000)}s...`, 4000);
+});
+
+// ─── Player Reconnected ───
+socket.on('player-reconnected', ({ playerName }) => {
+  showToast(`✅ ${playerName} reconnected!`, 2500);
+  sfx('click');
+});
 
 // ─── Reveal Answer (advantage response) ───
 socket.on('reveal-answer', ({ answer }) => {
@@ -1082,12 +1338,21 @@ socket.on('room-state', data => {
   if (!meInRoom && data.phase !== 'waiting') return;
 
   state.lastRoomState = data;
+
+  // Show reconnecting players with visual indicator
+  const reconnectingPlayers = data.players.filter(p => p.reconnecting);
+  if (reconnectingPlayers.length > 0) {
+    reconnectingPlayers.forEach(p => {
+      // Don't count reconnecting players for game logic, just show indicator
+    });
+  }
+
   if (data.phase === 'waiting') {
     $('#waiting-room-code').textContent = data.roomCode;
     // Show room name instead of code
     const nameEl = $('#waiting-room-name');
     if (nameEl) nameEl.textContent = data.roomName || data.roomCode;
-    $('#waiting-players').innerHTML = data.players.map(p => `<div class="waiting-player"><span class="wp-avatar">${p.avatar}</span><span class="wp-name">${escHtml(p.name)}</span>${p.isHost ? '<span class="wp-host">Host</span>' : ''}</div>`).join('');
+    $('#waiting-players').innerHTML = data.players.map(p => `<div class="waiting-player${p.reconnecting ? ' wp-reconnecting' : ''}"><span class="wp-avatar">${p.avatar}</span><span class="wp-name">${escHtml(p.name)}${p.reconnecting ? ' <span class="wp-reconnect-badge">⏳</span>' : ''}</span>${p.isHost ? '<span class="wp-host">Host</span>' : ''}</div>`).join('');
     const me = data.players.find(p => p.id === state.myId);
     if (me?.isHost && data.players.length >= 2) {
       $('#btn-start-game').style.display = 'flex';
@@ -1423,10 +1688,11 @@ socket.on('game-over', ({ winner, scores, packName, totalRounds }) => {
 socket.on('emoji-reaction', ({ playerName, emoji }) => {
   // Floating emoji
   const el = document.createElement('div'); el.className = 'floating-emoji';
-  el.innerHTML = `<span style="font-size:32px">${emoji}</span><span style="font-size:11px;display:block;color:#fff;text-shadow:0 1px 4px rgba(0,0,0,.7);margin-top:-4px">${escHtml(playerName)}</span>`;
-  el.style.left = (15 + Math.random() * 70) + '%'; el.style.bottom = '12%';
-  $('#emoji-float-container').appendChild(el); setTimeout(() => el.remove(), 2200);
-  // Toast
+  el.innerHTML = `<span>${emoji}</span><span style="font-size:11px;display:block;color:#fff;text-shadow:0 1px 4px rgba(0,0,0,.7);margin-top:2px">${escHtml(playerName)}</span>`;
+  el.style.left = (15 + Math.random() * 70) + '%';
+  el.style.bottom = '14%';
+  $('#emoji-float-container').appendChild(el);
+  setTimeout(() => el.remove(), 2000);
   showToast(`${playerName} sent ${emoji}`, 1500);
 });
 
