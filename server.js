@@ -281,11 +281,20 @@ io.on('connection', (socket) => {
   // ── Start Game ──
   socket.on('start-game', ({ roomCode }) => {
     const room = rooms[roomCode];
-    if (!room) return;
+    if (!room) {
+      console.warn('[Game] start-game: room not found:', roomCode);
+      return socket.emit('game-error', 'Room not found');
+    }
     const player = room.players.find(p => p.id === socket.id);
-    if (!player || !player.isHost) return;
+    if (!player || !player.isHost) {
+      console.warn('[Game] start-game: not host. socketId:', socket.id);
+      return socket.emit('game-error', 'Only the host can start the game');
+    }
     const active = getActivePlayers(room);
-    if (active.length < 2) return socket.emit('game-error', 'Need at least 2 players');
+    if (active.length < 2) {
+      console.warn('[Game] start-game: not enough players:', active.length);
+      return socket.emit('game-error', 'Need at least 2 players');
+    }
 
     // Remove inactive/disconnected players before starting
     room.players = active;
@@ -295,6 +304,7 @@ io.on('connection', (socket) => {
     room.currentTurnPlayerIndex = room.turnOrder[0];
     room.players.forEach(p => p.score = 0);
 
+    console.log(`[Game] Starting in ${roomCode} with ${room.players.length} players:`, room.players.map(p => p.name));
     startQuestionPhase(roomCode);
     io.emit('rooms-updated');
     console.log(`[Game] Started in ${roomCode}`);
