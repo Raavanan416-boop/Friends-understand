@@ -640,6 +640,10 @@ function initUI() {
   $('#btn-leave-waiting').onclick = leaveRoom;
   $('#btn-start-game').onclick = startGame;
 
+  // ─── Loading Screen Close (safety) ───
+  const loadingScreen = document.getElementById('game-loading-screen');
+  if (loadingScreen) loadingScreen.style.display = 'none';
+
   // Game
   $('#btn-players-list').onclick = () => { if (state.lastRoomState) updatePL(state.lastRoomState.players); openPopup('players'); };
   $('#btn-leaderboard').onclick = () => openPopup('leaderboard');
@@ -917,6 +921,10 @@ function cleanupAndGoHome() {
   state.lastRoomState = null;
   state.hasLeftRoom = true;
   isInGame = false;
+  // Reset game start state
+  _gameStarting = false;
+  clearTimeout(state._startGameTimeout);
+  hideGameLoadingScreen();
   updateGameStatus(false);
   clearInterval(state.timerInterval);
   closeAllPanels();
@@ -930,6 +938,10 @@ function goHome() {
   state.lastRoomState = null;
   state.hasLeftRoom = false;
   isInGame = false;
+  // Reset game start state
+  _gameStarting = false;
+  clearTimeout(state._startGameTimeout);
+  hideGameLoadingScreen();
   updateGameStatus(false);
   clearInterval(state.timerInterval);
   closeAllPanels();
@@ -938,7 +950,100 @@ function goHome() {
   fetchRooms();
 }
 
-function startGame() { socket.emit('start-game', { roomCode: state.roomCode }); sfx('click'); }
+// ═══ FIXED GAME START — with loading, disable, validation, and debug ═══
+let _gameStarting = false;
+function startGame() {
+  // ── STEP 1: Prevent multiple clicks ──
+  if (_gameStarting) {
+    console.warn('[StartGame] Already starting, ignoring click');
+    return;
+  }
+  const startBtn = $('#btn-start-game');
+
+  // ── STEP 2: Validate room code exists ──
+  if (!state.roomCode) {
+    console.error('[StartGame] No roomCode!');
+    showToast('❌ No room found. Please create or join a room first.');
+    return;
+  }
+
+  // ── STEP 3: Validate players count ──
+  if (state.lastRoomState) {
+    const connectedPlayers = state.lastRoomState.players.filter(p => p.connected !== false);
+    console.log('[StartGame] Connected players:', connectedPlayers.length, connectedPlayers.map(p => p.name));
+    if (connectedPlayers.length < 2) {
+      showToast('❌ Need at least 2 players to start!');
+      return;
+    }
+  }
+
+  // ── STEP 4: Disable button immediately ──
+  _gameStarting = true;
+  if (startBtn) {
+    startBtn.disabled = true;
+    startBtn.textContent = '⏳ Starting...';
+    startBtn.style.opacity = '0.6';
+    startBtn.style.pointerEvents = 'none';
+  }
+
+  // ── STEP 5: Show loading screen ──
+  showGameLoadingScreen();
+
+  // ── STEP 6: Debug logging ──
+  console.log('[StartGame] Game starting...');
+  console.log('[StartGame] roomCode:', state.roomCode);
+  console.log('[StartGame] myId:', state.myId);
+  console.log('[StartGame] players:', state.lastRoomState?.players);
+
+  // ── STEP 7: Emit start-game to server ──
+  socket.emit('start-game', { roomCode: state.roomCode });
+  sfx('click');
+
+  // ── STEP 8: Timeout safety — if game doesn't start in 8 seconds, re-enable ──
+  state._startGameTimeout = setTimeout(() => {
+    if (_gameStarting) {
+      console.warn('[StartGame] Timeout — game did not start in 8s');
+      _gameStarting = false;
+      hideGameLoadingScreen();
+      if (startBtn) {
+        startBtn.disabled = false;
+        startBtn.style.opacity = '1';
+        startBtn.style.pointerEvents = 'auto';
+        startBtn.textContent = '🚀 Start Game';
+      }
+      showToast('⚠️ Unable to start game. Try again.', 3000);
+    }
+  }, 8000);
+}
+
+// ═══ LOADING SCREEN HELPERS ═══
+function showGameLoadingScreen() {
+  let ls = document.getElementById('game-loading-screen');
+  if (!ls) {
+    ls = document.createElement('div');
+    ls.id = 'game-loading-screen';
+    ls.innerHTML = `
+      <div class="game-loading-inner">
+        <div class="game-loading-spinner"></div>
+        <div class="game-loading-text">Loading Game...</div>
+        <div class="game-loading-sub">Syncing with all players</div>
+      </div>
+    `;
+    document.body.appendChild(ls);
+  }
+  ls.style.display = 'flex';
+  // Force reflow for animation
+  void ls.offsetWidth;
+  ls.classList.add('active');
+}
+
+function hideGameLoadingScreen() {
+  const ls = document.getElementById('game-loading-screen');
+  if (ls) {
+    ls.classList.remove('active');
+    setTimeout(() => { ls.style.display = 'none'; }, 300);
+  }
+}
 
 // ─── Timer ───
 function startTimer(endTime, totalMs, warnSec) {
@@ -1195,7 +1300,9 @@ function renderGameContent(data) {
 
 // ─── Socket Events ───
 socket.on('connect', () => {
+  const oldId = state.myId;
   state.myId = socket.id;
+  console.log('[Socket] Connected. myId:', state.myId, oldId ? '(was: ' + oldId + ')' : '(fresh)');
   // Check if we can rejoin a game after reconnect
   if (state.playerName) {
     socket.emit('check-rejoin', { playerName: state.playerName });
@@ -1208,6 +1315,9 @@ socket.on('disconnect', () => {
 });
 
 socket.on('reconnect', () => {
+  // Update myId on reconnect (critical for game start button visibility)
+  state.myId = socket.id;
+  console.log('[Socket] Reconnected. New myId:', state.myId);
   showToast('✅ Reconnected!', 2000);
   if (state.playerName && state.roomCode) {
     // Try to rejoin the current room
@@ -1324,7 +1434,21 @@ socket.on('room-joined', ({ roomCode }) => {
   state.roomCode = roomCode; state.hasLeftRoom = false; closeAllPanels(); showScreen('waiting'); showToast('Joined!');
 });
 socket.on('join-error', m => showToast('❌ ' + m));
-socket.on('game-error', m => showToast('❌ ' + m));
+socket.on('game-error', m => {
+  console.error('[GameError]', m);
+  showToast('❌ ' + m);
+  // Re-enable start button on error
+  _gameStarting = false;
+  hideGameLoadingScreen();
+  clearTimeout(state._startGameTimeout);
+  const startBtn = $('#btn-start-game');
+  if (startBtn) {
+    startBtn.disabled = false;
+    startBtn.style.opacity = '1';
+    startBtn.style.pointerEvents = 'auto';
+    startBtn.textContent = '🚀 Start Game';
+  }
+});
 socket.on('rooms-updated', () => { if ($('#tab-join')?.classList.contains('active')) fetchRooms(); });
 
 socket.on('room-state', data => {
@@ -1334,8 +1458,24 @@ socket.on('room-state', data => {
   if (data.roomCode !== state.roomCode) return;
 
   // Check if this player is even in the player list
-  const meInRoom = data.players.some(p => p.id === state.myId);
-  if (!meInRoom && data.phase !== 'waiting') return;
+  // Use both ID match AND name match (handles reconnect ID changes)
+  const meById = data.players.some(p => p.id === state.myId);
+  const meByName = data.players.some(p => p.name === state.playerName);
+  const meInRoom = meById || meByName;
+
+  // If found by name but not by ID, update our myId to match
+  if (!meById && meByName) {
+    const mePlayer = data.players.find(p => p.name === state.playerName);
+    if (mePlayer) {
+      console.log('[RoomState] ID mismatch fix: was', state.myId, 'now', mePlayer.id);
+      state.myId = mePlayer.id;
+    }
+  }
+
+  if (!meInRoom && data.phase !== 'waiting') {
+    console.warn('[RoomState] Not in room, phase:', data.phase, 'myId:', state.myId);
+    return;
+  }
 
   state.lastRoomState = data;
 
@@ -1353,12 +1493,27 @@ socket.on('room-state', data => {
     const nameEl = $('#waiting-room-name');
     if (nameEl) nameEl.textContent = data.roomName || data.roomCode;
     $('#waiting-players').innerHTML = data.players.map(p => `<div class="waiting-player${p.reconnecting ? ' wp-reconnecting' : ''}"><span class="wp-avatar">${p.avatar}</span><span class="wp-name">${escHtml(p.name)}${p.reconnecting ? ' <span class="wp-reconnect-badge">⏳</span>' : ''}</span>${p.isHost ? '<span class="wp-host">Host</span>' : ''}</div>`).join('');
-    const me = data.players.find(p => p.id === state.myId);
+    const me = data.players.find(p => p.id === state.myId || p.name === state.playerName);
     if (me?.isHost && data.players.length >= 2) {
-      $('#btn-start-game').style.display = 'flex';
-      $('#btn-start-game').textContent = `🚀 Start Game (${data.players.length}/${data.maxPlayers})`;
+      const startBtn = $('#btn-start-game');
+      startBtn.style.display = 'flex';
+      // Only update text if not currently in "starting" state
+      if (!_gameStarting) {
+        startBtn.disabled = false;
+        startBtn.style.opacity = '1';
+        startBtn.style.pointerEvents = 'auto';
+        startBtn.textContent = `🚀 Start Game (${data.players.length}/${data.maxPlayers})`;
+      }
     } else { $('#btn-start-game').style.display = 'none'; }
   } else if (['question','guess'].includes(data.phase)) {
+    // ═══ GAME STARTED SUCCESSFULLY — clear loading state ═══
+    if (_gameStarting) {
+      console.log('[StartGame] ✅ Game started successfully! Phase:', data.phase);
+      _gameStarting = false;
+      clearTimeout(state._startGameTimeout);
+      hideGameLoadingScreen();
+    }
+
     showScreen('game');
     isInGame = true;
     $('#game-round-badge').textContent = `Round ${data.currentRound}/${data.totalRounds}`;
@@ -1609,6 +1764,10 @@ socket.on('guess-results', ({ results, correctAnswer, question, scores, anyCorre
 socket.on('game-over', ({ winner, scores, packName, totalRounds }) => {
   clearInterval(state.timerInterval); playSoundPack('win');
   isInGame = false;
+  // ═══ RESET game start state for play-again ═══
+  _gameStarting = false;
+  clearTimeout(state._startGameTimeout);
+  hideGameLoadingScreen();
   $('#gameover-title').textContent = winner.id === state.myId ? '🎉 You Won!' : 'Game Over!';
   $('#gameover-winner').innerHTML = `${winner.avatar} <strong>${escHtml(winner.name)}</strong> wins with ${winner.score} pts!`;
   // Show scores + Add Friend buttons for opponents
